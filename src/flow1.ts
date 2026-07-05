@@ -21,7 +21,7 @@ export async function setNgayGio(page: Page, nhan: string, giaTri: string): Prom
 }
 
 // Textarea tự do đứng sau nhãn
-async function setTextarea(page: Page, nhan: string, giaTri: string): Promise<void> {
+export async function setTextarea(page: Page, nhan: string, giaTri: string): Promise<void> {
   const ta = page.getByText(nhan, { exact: false }).first().locator('xpath=following::textarea[1]');
   await ta.click();
   await ta.fill(giaTri);
@@ -29,7 +29,7 @@ async function setTextarea(page: Page, nhan: string, giaTri: string): Promise<vo
 }
 
 // Ô ant-select đứng sau nhãn: mở dropdown, chọn option theo text
-async function pickAntSelect(page: Page, nhan: string, optionText: string): Promise<void> {
+export async function pickAntSelect(page: Page, nhan: string, optionText: string): Promise<void> {
   const sel = page
     .getByText(nhan, { exact: false })
     .first()
