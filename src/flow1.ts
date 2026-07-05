@@ -8,7 +8,7 @@ import path from 'node:path';
 // ---- Tiện ích điền theo NHÃN (locator tương đối, không phụ thuộc id GUID) ----
 
 // Ô ngày giờ (antd): ô input[placeholder="Chọn thời gian"] đứng sau nhãn
-async function setNgayGio(page: Page, nhan: string, giaTri: string): Promise<void> {
+export async function setNgayGio(page: Page, nhan: string, giaTri: string): Promise<void> {
   const input = page
     .getByText(nhan, { exact: false })
     .first()

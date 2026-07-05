@@ -34,8 +34,21 @@ export async function ensureLoggedIn(page: Page): Promise<void> {
         .first();
       const passInput = page.locator('input[type="password"]:visible').first();
 
-      await userInput.fill(config.hisUser, { timeout: 8000 });
-      await passInput.fill(config.hisPass, { timeout: 8000 });
+      // XÓA SẠCH tài khoản/mật khẩu do Chrome/Edge tự điền (autofill) trước khi nhập,
+      // rồi gõ lại + kiểm tra đúng giá trị (tránh dư ký tự -> đăng nhập sai).
+      const nhapChac = async (o: typeof userInput, giaTri: string) => {
+        for (let i = 0; i < 3; i++) {
+          await o.click();
+          await o.press('Control+a');
+          await o.press('Delete');
+          await page.waitForTimeout(150);
+          await o.pressSequentially(giaTri, { delay: 30 });
+          await page.waitForTimeout(200);
+          if ((await o.inputValue().catch(() => '')) === giaTri) return;
+        }
+      };
+      await nhapChac(userInput, config.hisUser);
+      await nhapChac(passInput, config.hisPass);
 
       // Nút đăng nhập: thử theo role/text, fallback Enter
       const loginBtn = page

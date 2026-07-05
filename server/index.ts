@@ -10,6 +10,7 @@ import { config, ROOT } from '../src/config.js';
 import { ensureLoggedIn } from '../src/login.js';
 import { setStepReporter } from '../src/helpers.js';
 import { chayLuong1, chayLuongKhamChuyenKhoa, VACCINE_MAC_DINH, type Vaccine } from '../src/flow1.js';
+import { chayLuong4, COMBO_CHON } from '../src/luong4.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -76,6 +77,17 @@ const WORKFLOWS = [
     icon: '🧑‍⚕️',
     patientNameField: 'hoTen',
     fields: [F_HOTEN, F_NGAY],
+  },
+  {
+    id: 'don-thuoc-ra-vien',
+    name: 'Đánh toa xuất viện (Luồng 4)',
+    icon: '💊',
+    patientNameField: 'maBA',
+    fields: [
+      { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
+      { key: 'ngay', label: 'Ngày y lệnh (DD/MM/YYYY)', type: 'text', required: true },
+      { key: 'combos', label: 'Combo thuốc (chọn nhiều được)', type: 'multiselect', options: Object.keys(COMBO_CHON), required: true },
+    ],
   },
 ];
 
@@ -157,6 +169,9 @@ async function processQueue(): Promise<void> {
       await chayLuongKhamChuyenKhoa(page, { tenBenhNhan, ngay: data.ngay, gio: '08:01:00', huongXuTri: 'Khám sơ sinh', maKhoa: '3050', noiDung: 'Khám trẻ dịch vụ theo yêu cầu' }, onConfirm);
     } else if (row.workflow_id === 'kham-phcn') {
       await chayLuongKhamChuyenKhoa(page, { tenBenhNhan, ngay: data.ngay, gio: '08:02:00', huongXuTri: 'Khám phục hồi chức năng', maKhoa: '4074', noiDung: '' }, onConfirm);
+    } else if (row.workflow_id === 'don-thuoc-ra-vien') {
+      // Luồng 4 tìm theo Mã BA + KHÔNG có điểm xác nhận (note: cứ Lưu hoàn thành)
+      await chayLuong4(page, { maBA: data.maBA, ngay: data.ngay, combos: data.combos });
     } else {
       throw new Error('Workflow chưa hỗ trợ: ' + row.workflow_id);
     }
@@ -206,7 +221,7 @@ app.post('/api/jobs', requireAuth, (req, res) => {
   const { workflowId, data } = req.body || {};
   if (!workflowId || !data) return res.status(400).json({ error: 'Thiếu dữ liệu' });
   const info = db.prepare(`INSERT INTO jobs(workflow_id, data_json, patient_name, status, created_at) VALUES(?,?,?, 'queued', ?)`)
-    .run(workflowId, JSON.stringify(data), data.hoTen || null, nowVN());
+    .run(workflowId, JSON.stringify(data), data.hoTen || (data.maBA ? 'Mã BA ' + data.maBA : null), nowVN());
   setTimeout(processQueue, 100);
   res.json({ id: info.lastInsertRowid });
 });

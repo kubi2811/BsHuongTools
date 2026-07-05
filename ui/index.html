@@ -58,6 +58,7 @@ let formState = {};     // giá trị đang nhập của form hiện tại
 
 async function render(name, arg) {
   view = { name, jobId: name==='job' ? arg : view.jobId, wf: name==='form' ? arg : view.wf };
+  pollSig = ''; // chuyển trang -> cho phép poll vẽ lại lần tới
   if (name === 'login') return renderLogin();
   if (name === 'home') return renderHome();
   if (name === 'form') return renderForm(arg);
@@ -80,17 +81,17 @@ function renderLogin() {
   c.querySelector('#pin').addEventListener('keydown', e => { if(e.key==='Enter') c.querySelector('#go').click(); });
 }
 
-// ---- Trang chủ ----
-async function renderHome() {
-  const s = await api('/api/system/status');
-  const jobs = await api('/api/jobs');
+// ---- Trang chủ ---- (nhận sẵn data từ poll để KHÔNG vẽ lại khi không đổi -> hết giật)
+async function renderHome(s, jobs) {
+  if (!s) s = await api('/api/system/status');
+  if (!jobs) jobs = await api('/api/jobs');
+  if (!WF.length) WF = await api('/api/workflows');
   app.innerHTML = '';
   let bColor = s.currentJob ? '#eaf2ff' : (s.browserOk ? '#eafaf0' : '#fff4e6');
   let bText = s.currentJob ? `🔵 Đang xử lý: ${s.currentJob.patient_name||''} — ${s.currentJob.current_step||''}`
     : (s.browserOk ? '🟢 Bot sẵn sàng' : '🟠 Bot chưa mở browser');
   app.appendChild($(`<div class="banner" style="background:${bColor}">${bText}<div class="muted">Hàng đợi: ${s.queueLength} job</div></div>`));
 
-  WF = await api('/api/workflows');
   const g = $(`<div class="card"><h2>Quy trình</h2><div id="wfs"></div>
     <div style="height:10px"></div>
     <div class="row"><button class="btn-mut" id="open">Mở/Kiểm tra browser</button><button class="btn-mut" id="restart">Khởi động lại bot</button></div>
@@ -132,11 +133,11 @@ async function renderForm(wfId) {
   const fbox = c.querySelector('#fields');
   w.fields.forEach(f => {
     if (f.type === 'multiselect') {
-      formState[f.key] = [...f.options]; // mặc định chọn hết
-      const wrap = $(`<div><label>${f.label}</label><div class="row" style="margin-bottom:14px"></div></div>`);
-      const row = wrap.querySelector('.row');
+      formState[f.key] = []; // mặc định chưa chọn -> user tự pick
+      const wrap = $(`<div><label>${f.label}</label><div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"></div></div>`);
+      const row = wrap.querySelector('div > div');
       f.options.forEach(opt => {
-        const chip = $(`<div class="vac on" data-v="${opt}">${opt}</div>`);
+        const chip = $(`<div class="vac" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
         chip.onclick = () => {
           const arr = formState[f.key]; const i = arr.indexOf(opt);
           if (i >= 0) arr.splice(i, 1); else arr.push(opt);
@@ -166,8 +167,9 @@ async function renderForm(wfId) {
 }
 
 // ---- Chi tiết job ----
-async function renderJob(id) {
-  const { job, logs } = await api('/api/jobs/'+id);
+async function renderJob(id, data) {
+  if (!data) data = await api('/api/jobs/'+id);
+  const { job, logs } = data;
   app.innerHTML = '';
   app.appendChild($(`<a class="back" onclick="render('home')">← Trang chủ</a>`));
   const head = $(`<div class="card"><h2>Job #${job.id} — ${job.patient_name||''}</h2>
@@ -203,16 +205,24 @@ async function renderJob(id) {
   });
 }
 
-// ---- Polling ----
+// ---- Polling ---- (chỉ vẽ lại khi DỮ LIỆU ĐỔI -> hết giật giật)
+let pollSig = '';
 async function poll() {
-  // Đừng đụng vào màn ĐĂNG NHẬP: nếu poll gọi API bị 401 -> vẽ lại login -> xoá PIN đang gõ
-  // (trên iPhone gõ chậm sẽ bị xoá liên tục -> "không nhập được mã PIN").
+  // Đừng đụng vào màn ĐĂNG NHẬP (poll 401 -> vẽ lại login -> xoá PIN đang gõ)
   if (view.name === 'login') return;
   try {
-    const s = await api('/api/system/status');
-    document.getElementById('sysDot').textContent = s.currentJob ? '🔵 đang chạy' : (s.browserOk?'🟢':'🟠');
-    if (view.name === 'home') renderHome();
-    else if (view.name === 'job' && view.jobId) renderJob(view.jobId);
+    if (view.name === 'home') {
+      const s = await api('/api/system/status');
+      const jobs = await api('/api/jobs');
+      const dot = document.getElementById('sysDot');
+      if (dot) dot.textContent = s.currentJob ? '🔵 đang chạy' : (s.browserOk ? '🟢' : '🟠');
+      const sig = JSON.stringify([s.browserOk, s.queueLength, s.currentJob, jobs.slice(0,8).map(j => [j.id, j.status, j.current_step])]);
+      if (sig !== pollSig) { pollSig = sig; renderHome(s, jobs); }
+    } else if (view.name === 'job' && view.jobId) {
+      const data = await api('/api/jobs/' + view.jobId);
+      const sig = JSON.stringify([data.job.status, data.job.current_step, data.job.confirm_shot, data.logs.length]);
+      if (sig !== pollSig) { pollSig = sig; renderJob(view.jobId, data); }
+    }
   } catch {}
 }
 setInterval(poll, 2500);
