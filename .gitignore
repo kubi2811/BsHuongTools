@@ -1,0 +1,16 @@
+# Dữ liệu local - KHÔNG commit, KHÔNG sync OneDrive
+node_modules/
+data/
+.env
+*.log
+
+# note.txt chứa mật khẩu HIS + tên bệnh nhân thật -> KHÔNG đẩy lên GitHub
+note.txt
+
+# Script dò/test tạm (chứa dữ liệu test) - không đưa vào repo
+src/probe*.ts
+src/discover.ts
+src/ui-shot.ts
+
+# Ảnh chụp/PDF tạm
+Picture/

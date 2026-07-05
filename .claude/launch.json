@@ -1,0 +1,1 @@
+﻿{ "version": "0.0.1", "configurations": [ { "name": "hisbot", "runtimeExecutable": "npm", "runtimeArgs": ["run","server"], "port": 3000 } ] }

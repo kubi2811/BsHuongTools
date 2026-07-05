@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Trợ lý nhập liệu HIS</title>
+<style>
+  :root { --bg:#f2f5f9; --card:#fff; --pri:#1f6feb; --ok:#16a34a; --warn:#d97706; --err:#dc2626; --mut:#64748b; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:#0f172a; }
+  header { background:var(--pri); color:#fff; padding:14px 16px; font-weight:700; font-size:18px; display:flex; align-items:center; gap:8px; position:sticky; top:0; z-index:5; }
+  .wrap { max-width:640px; margin:0 auto; padding:14px; }
+  .card { background:var(--card); border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  h2 { font-size:16px; margin:0 0 12px; }
+  label { display:block; font-size:14px; font-weight:600; margin:10px 0 6px; }
+  input[type=text], input[type=password] { width:100%; padding:13px; font-size:16px; border:1px solid #cbd5e1; border-radius:10px; }
+  button { font-size:16px; font-weight:700; border:none; border-radius:10px; padding:14px; cursor:pointer; width:100%; }
+  .btn-pri { background:var(--pri); color:#fff; }
+  .btn-ok { background:var(--ok); color:#fff; }
+  .btn-err { background:var(--err); color:#fff; }
+  .btn-mut { background:#e2e8f0; color:#0f172a; }
+  .row { display:flex; gap:10px; }
+  .row > * { flex:1; }
+  .chip { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:700; }
+  .chips { display:flex; gap:10px; flex-wrap:wrap; }
+  .vac { flex:1; text-align:center; padding:14px; border:2px solid #cbd5e1; border-radius:10px; font-weight:700; cursor:pointer; user-select:none; }
+  .vac.on { border-color:var(--pri); background:#eaf2ff; color:var(--pri); }
+  .banner { padding:12px 14px; border-radius:10px; font-weight:600; margin-bottom:14px; }
+  .job { display:flex; justify-content:space-between; align-items:center; padding:12px; border-bottom:1px solid #eef2f7; cursor:pointer; }
+  .job:last-child { border-bottom:none; }
+  .muted { color:var(--mut); font-size:13px; }
+  .timeline .st { display:flex; gap:10px; padding:8px 0; border-bottom:1px dashed #e2e8f0; font-size:14px; }
+  .dot { width:10px; height:10px; border-radius:50%; margin-top:5px; flex:none; }
+  img.shot { width:100%; border-radius:10px; border:1px solid #e2e8f0; margin-top:6px; }
+  .hide { display:none; }
+  a.back { color:var(--pri); font-weight:600; text-decoration:none; font-size:14px; display:inline-block; margin-bottom:10px; }
+</style>
+</head>
+<body>
+<header>💉 Trợ lý nhập liệu HIS <span id="sysDot" style="margin-left:auto;font-size:13px;font-weight:500"></span></header>
+<div class="wrap" id="app"></div>
+
+<script>
+const $ = (h) => { const d=document.createElement('div'); d.innerHTML=h.trim(); return d.firstChild; };
+const app = document.getElementById('app');
+const api = async (url, opt) => {
+  const r = await fetch(url, { headers:{'Content-Type':'application/json'}, ...opt });
+  if (r.status === 401) { render('login'); throw new Error('401'); }
+  return r.json();
+};
+const STATUS_VI = { queued:'Trong hàng đợi', running:'Đang chạy', waiting_confirm:'Chờ xác nhận', success:'Thành công', failed:'Lỗi', canceled:'Đã hủy' };
+const STATUS_COLOR = { queued:'#64748b', running:'#1f6feb', waiting_confirm:'#d97706', success:'#16a34a', failed:'#dc2626', canceled:'#94a3b8' };
+const chip = (s) => `<span class="chip" style="background:${STATUS_COLOR[s]}22;color:${STATUS_COLOR[s]}">${STATUS_VI[s]||s}</span>`;
+
+let view = { name:'home', jobId:null, wf:null };
+let WF = [];            // danh sách workflow (từ /api/workflows)
+let formState = {};     // giá trị đang nhập của form hiện tại
+
+async function render(name, arg) {
+  view = { name, jobId: name==='job' ? arg : view.jobId, wf: name==='form' ? arg : view.wf };
+  if (name === 'login') return renderLogin();
+  if (name === 'home') return renderHome();
+  if (name === 'form') return renderForm(arg);
+  if (name === 'job') return renderJob(arg);
+}
+
+// ---- Đăng nhập ----
+function renderLogin() {
+  app.innerHTML = '';
+  const c = $(`<div class="card"><h2>Đăng nhập</h2>
+    <label>Mã PIN</label><input id="pin" type="password" inputmode="numeric" placeholder="Nhập PIN" />
+    <div style="height:12px"></div><button class="btn-pri" id="go">Vào</button>
+    <div id="err" style="color:var(--err);margin-top:10px;font-size:14px"></div></div>`);
+  app.appendChild(c);
+  c.querySelector('#go').onclick = async () => {
+    const pin = c.querySelector('#pin').value;
+    const r = await fetch('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pin}) });
+    if (r.ok) render('home'); else c.querySelector('#err').textContent = 'Sai mã PIN';
+  };
+  c.querySelector('#pin').addEventListener('keydown', e => { if(e.key==='Enter') c.querySelector('#go').click(); });
+}
+
+// ---- Trang chủ ----
+async function renderHome() {
+  const s = await api('/api/system/status');
+  const jobs = await api('/api/jobs');
+  app.innerHTML = '';
+  let bColor = s.currentJob ? '#eaf2ff' : (s.browserOk ? '#eafaf0' : '#fff4e6');
+  let bText = s.currentJob ? `🔵 Đang xử lý: ${s.currentJob.patient_name||''} — ${s.currentJob.current_step||''}`
+    : (s.browserOk ? '🟢 Bot sẵn sàng' : '🟠 Bot chưa mở browser');
+  app.appendChild($(`<div class="banner" style="background:${bColor}">${bText}<div class="muted">Hàng đợi: ${s.queueLength} job</div></div>`));
+
+  WF = await api('/api/workflows');
+  const g = $(`<div class="card"><h2>Quy trình</h2><div id="wfs"></div>
+    <div style="height:10px"></div>
+    <div class="row"><button class="btn-mut" id="open">Mở/Kiểm tra browser</button><button class="btn-mut" id="restart">Khởi động lại bot</button></div>
+    </div>`);
+  app.appendChild(g);
+  const wfs = g.querySelector('#wfs');
+  WF.forEach(w => {
+    const b = $(`<button class="btn-pri" style="margin-bottom:8px">${w.icon} ${w.name}</button>`);
+    b.onclick = () => render('form', w.id);
+    wfs.appendChild(b);
+  });
+  g.querySelector('#open').onclick = async () => { g.querySelector('#open').textContent='Đang mở...'; await api('/api/system/open-browser',{method:'POST'}); renderHome(); };
+  g.querySelector('#restart').onclick = async () => { await api('/api/system/restart-browser',{method:'POST'}); renderHome(); };
+
+  const list = $(`<div class="card"><h2>Job gần đây</h2><div id="jl"></div></div>`);
+  app.appendChild(list);
+  const jl = list.querySelector('#jl');
+  if (!jobs.length) jl.innerHTML = '<div class="muted">Chưa có job nào.</div>';
+  jobs.slice(0,8).forEach(j => {
+    const el = $(`<div class="job"><div><div><b>#${j.id}</b> ${j.patient_name||''}</div><div class="muted">${j.current_step||''}</div></div>${chip(j.status)}</div>`);
+    el.onclick = () => render('job', j.id);
+    jl.appendChild(el);
+  });
+}
+
+// ---- Form tạo job (tự sinh theo manifest của workflow) ----
+async function renderForm(wfId) {
+  if (!WF.length) WF = await api('/api/workflows');
+  const w = WF.find(x => x.id === wfId) || WF[0];
+  formState = {};
+  app.innerHTML = '';
+  app.appendChild($(`<a class="back" onclick="render('home')">← Trang chủ</a>`));
+  const c = $(`<div class="card"><h2>${w.icon} ${w.name}</h2><div id="fields"></div>
+    <button class="btn-ok" id="run">▶ Chạy ngay</button>
+    <div id="err" style="color:var(--err);margin-top:10px;font-size:14px"></div>
+    <div class="muted" style="margin-top:10px">Bot sẽ tự làm tới trước nút <b>Lưu cuối</b> rồi dừng cho bác sĩ xác nhận.</div>
+    </div>`);
+  app.appendChild(c);
+  const fbox = c.querySelector('#fields');
+  w.fields.forEach(f => {
+    if (f.type === 'multiselect') {
+      formState[f.key] = [...f.options]; // mặc định chọn hết
+      const wrap = $(`<div><label>${f.label}</label><div class="row" style="margin-bottom:14px"></div></div>`);
+      const row = wrap.querySelector('.row');
+      f.options.forEach(opt => {
+        const chip = $(`<div class="vac on" data-v="${opt}">${opt}</div>`);
+        chip.onclick = () => {
+          const arr = formState[f.key]; const i = arr.indexOf(opt);
+          if (i >= 0) arr.splice(i, 1); else arr.push(opt);
+          chip.classList.toggle('on', arr.includes(opt));
+        };
+        row.appendChild(chip);
+      });
+      fbox.appendChild(wrap);
+    } else {
+      formState[f.key] = '';
+      const ph = f.key === 'ngay' ? 'vd: 06/07/2026' : (f.key === 'hoTen' ? 'vd: nguyễn văn a' : '');
+      const wrap = $(`<div><label>${f.label}</label><input type="text" placeholder="${ph}" /></div>`);
+      const inp = wrap.querySelector('input');
+      inp.oninput = () => { formState[f.key] = inp.value.trim(); };
+      fbox.appendChild(wrap);
+    }
+  });
+  c.querySelector('#run').onclick = async () => {
+    for (const f of w.fields) {
+      const v = formState[f.key];
+      if (f.required && (!v || (Array.isArray(v) && !v.length)))
+        return c.querySelector('#err').textContent = 'Nhập/chọn: ' + f.label;
+    }
+    const r = await api('/api/jobs', { method:'POST', body: JSON.stringify({ workflowId: w.id, data: { ...formState } }) });
+    render('job', r.id);
+  };
+}
+
+// ---- Chi tiết job ----
+async function renderJob(id) {
+  const { job, logs } = await api('/api/jobs/'+id);
+  app.innerHTML = '';
+  app.appendChild($(`<a class="back" onclick="render('home')">← Trang chủ</a>`));
+  const head = $(`<div class="card"><h2>Job #${job.id} — ${job.patient_name||''}</h2>
+    <div>${chip(job.status)} <span class="muted">${job.current_step||''}</span></div>
+    ${job.error?`<div class="banner" style="background:#fdecec;color:var(--err);margin-top:10px">❌ ${job.error}</div>`:''}
+    </div>`);
+  app.appendChild(head);
+
+  // Điểm xác nhận: ảnh + 2 nút to
+  if (job.status === 'waiting_confirm') {
+    const cf = $(`<div class="card"><h2>⏸ Kiểm tra trước khi Lưu</h2>
+      <div class="muted">Bot đã điền xong, chưa bấm Lưu. Xem lại rồi quyết định:</div>
+      ${job.confirm_shot?`<img class="shot" src="/screenshots/${job.confirm_shot}" />`:''}
+      <div class="row" style="margin-top:12px">
+        <button class="btn-ok" id="cf">✅ Xác nhận Lưu</button>
+        <button class="btn-err" id="cc">❌ Hủy (không Lưu)</button>
+      </div></div>`);
+    app.appendChild(cf);
+    cf.querySelector('#cf').onclick = async () => { await api('/api/jobs/'+id+'/confirm',{method:'POST'}); renderJob(id); };
+    cf.querySelector('#cc').onclick = async () => { await api('/api/jobs/'+id+'/cancel',{method:'POST'}); renderJob(id); };
+  }
+
+  // Timeline các bước + ảnh
+  const tl = $(`<div class="card"><h2>Diễn tiến (${logs.length} bước)</h2><div class="timeline" id="tl"></div></div>`);
+  app.appendChild(tl);
+  const box = tl.querySelector('#tl');
+  logs.slice().reverse().forEach(l => {
+    const col = l.level==='error' ? 'var(--err)' : 'var(--ok)';
+    const el = $(`<div class="st"><div class="dot" style="background:${col}"></div>
+      <div style="flex:1"><div>${l.step} <span class="muted">(${l.duration_ms||0}ms)</span></div>
+      ${l.screenshot?`<img class="shot" loading="lazy" src="/screenshots/${l.screenshot}" />`:''}</div></div>`);
+    box.appendChild(el);
+  });
+}
+
+// ---- Polling ----
+async function poll() {
+  // Đừng đụng vào màn ĐĂNG NHẬP: nếu poll gọi API bị 401 -> vẽ lại login -> xoá PIN đang gõ
+  // (trên iPhone gõ chậm sẽ bị xoá liên tục -> "không nhập được mã PIN").
+  if (view.name === 'login') return;
+  try {
+    const s = await api('/api/system/status');
+    document.getElementById('sysDot').textContent = s.currentJob ? '🔵 đang chạy' : (s.browserOk?'🟢':'🟠');
+    if (view.name === 'home') renderHome();
+    else if (view.name === 'job' && view.jobId) renderJob(view.jobId);
+  } catch {}
+}
+setInterval(poll, 2500);
+
+// Khởi động: thử vào home, nếu 401 -> login
+api('/api/workflows').then(() => render('home')).catch(() => render('login'));
+</script>
+</body>
+</html>
