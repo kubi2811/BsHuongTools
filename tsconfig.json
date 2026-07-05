@@ -8,5 +8,6 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "server/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "src/probe*.ts", "src/discover.ts", "src/ui-shot.ts", "src/demo.ts", "src/run-flow1.ts"]
 }

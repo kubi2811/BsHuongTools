@@ -51,6 +51,24 @@ db.prepare(`UPDATE jobs SET status='failed', error='Gián đoạn giữa chừng
 
 const nowVN = () => new Date().toISOString();
 
+// Dọn ảnh chụp cũ hơn N ngày (ảnh chứa dữ liệu bệnh nhân - PLAN mục 16). Log chữ trong DB vẫn giữ.
+function donAnhCu(): void {
+  const ttlMs = config.screenshotRetentionDays * 24 * 3600 * 1000;
+  if (!(ttlMs > 0)) return;
+  const now = Date.now();
+  let n = 0;
+  try {
+    for (const f of fs.readdirSync(config.screenshotDir)) {
+      const p = path.join(config.screenshotDir, f);
+      try {
+        const st = fs.statSync(p);
+        if (st.isFile() && now - st.mtimeMs > ttlMs) { fs.unlinkSync(p); n++; }
+      } catch { /* bỏ qua file lỗi */ }
+    }
+    if (n) console.log(`🧹 Đã dọn ${n} ảnh/file cũ hơn ${config.screenshotRetentionDays} ngày.`);
+  } catch { /* thư mục chưa tồn tại */ }
+}
+
 // ---------- Workflow manifest ----------
 const F_HOTEN = { key: 'hoTen', label: 'Tên bệnh nhân (khỏi gõ "CB")', type: 'text', required: true };
 const F_NGAY = { key: 'ngay', label: 'Ngày y lệnh (DD/MM/YYYY)', type: 'text', required: true };
@@ -292,7 +310,7 @@ app.post('/api/system/restart-browser', requireAuth, async (_req, res) => {
 
 // Ảnh màn hình (yêu cầu đăng nhập)
 app.get('/screenshots/:file', requireAuth, (req, res) => {
-  const f = path.join(config.screenshotDir, path.basename(req.params.file));
+  const f = path.join(config.screenshotDir, path.basename(String(req.params.file)));
   if (fs.existsSync(f)) res.sendFile(f);
   else res.status(404).end();
 });
@@ -304,6 +322,9 @@ const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, () => {
   console.log(`\n🚀 Trợ lý nhập liệu HIS đang chạy: http://localhost:${PORT}`);
   console.log(`   PIN đăng nhập UI: ${config.pin}`);
+  // Dọn ảnh cũ lúc khởi động + mỗi 6 giờ (ảnh chứa dữ liệu bệnh nhân)
+  donAnhCu();
+  setInterval(donAnhCu, 6 * 3600 * 1000);
   // Chạy tiếp job còn trong hàng đợi (nếu có)
   processQueue();
 });

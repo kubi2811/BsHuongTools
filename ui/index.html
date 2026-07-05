@@ -182,7 +182,7 @@ async function renderJob(id, data) {
   if (job.status === 'waiting_confirm') {
     const cf = $(`<div class="card"><h2>⏸ Kiểm tra trước khi Lưu</h2>
       <div class="muted">Bot đã điền xong, chưa bấm Lưu. Xem lại rồi quyết định:</div>
-      ${job.confirm_shot?`<img class="shot" src="/screenshots/${job.confirm_shot}" />`:''}
+      ${job.confirm_shot?`<img class="shot" src="/screenshots/${job.confirm_shot}" onerror="this.outerHTML='<div class=&quot;muted&quot;>(ảnh đã xóa theo chính sách lưu trữ)</div>'" />`:''}
       <div class="row" style="margin-top:12px">
         <button class="btn-ok" id="cf">✅ Xác nhận Lưu</button>
         <button class="btn-err" id="cc">❌ Hủy (không Lưu)</button>
@@ -200,7 +200,7 @@ async function renderJob(id, data) {
     const col = l.level==='error' ? 'var(--err)' : 'var(--ok)';
     const el = $(`<div class="st"><div class="dot" style="background:${col}"></div>
       <div style="flex:1"><div>${l.step} <span class="muted">(${l.duration_ms||0}ms)</span></div>
-      ${l.screenshot?`<img class="shot" loading="lazy" src="/screenshots/${l.screenshot}" />`:''}</div></div>`);
+      ${l.screenshot?`<img class="shot" loading="lazy" src="/screenshots/${l.screenshot}" onerror="this.outerHTML='<div class=&quot;muted&quot;>(ảnh đã xóa)</div>'" />`:''}</div></div>`);
     box.appendChild(el);
   });
 }

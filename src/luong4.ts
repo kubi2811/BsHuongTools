@@ -109,16 +109,26 @@ export function buildDanhSachThuoc(comboNames: string[]): ThuocRaVien[] {
 // ---- Các bước thao tác trên form đơn thuốc ra viện ----
 
 // Kiểm tra "đã có đơn -> dừng" (theo note) rồi tạo tờ nếu chưa có.
+// Chờ đúng trạng thái (nút Tạo HOẶC form đã mở) rồi mới quyết -> tránh race báo nhầm "đã có".
 export async function taoToDonThuoc(page: Page): Promise<void> {
   await step(page, 'Kiểm tra & Tạo tờ điều trị đơn thuốc ra viện', async () => {
-    const chuaTao = page.getByText(/Chưa tạo tờ điều trị đơn thuốc ra viện/i);
-    if (!(await chuaTao.isVisible().catch(() => false))) {
-      // Không thấy "Chưa tạo" -> đã có đơn thuốc -> DỪNG (theo note, tránh trùng)
+    const taoBtn = page.getByRole('button', { name: /Tạo tờ điều trị đơn thuốc ra viện/i }).first();
+    const formField = page.getByPlaceholder(/Chọn thuốc/i).first();
+    // Chờ 1 trong 2: nút Tạo (chưa có đơn) HOẶC ô Chọn thuốc (đã có đơn/form đang mở)
+    await Promise.race([
+      taoBtn.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}),
+      formField.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}),
+    ]);
+    await page.waitForTimeout(500);
+    if (await taoBtn.isVisible().catch(() => false)) {
+      await taoBtn.click(); // chưa có đơn -> tạo mới
+      await formField.waitFor({ state: 'visible', timeout: 15000 });
+    } else if (await formField.isVisible().catch(() => false)) {
+      // Đã có đơn thuốc (form hiện sẵn) -> DỪNG (theo note, tránh kê trùng)
       throw new Error('ĐÃ CÓ đơn thuốc ra viện cho bệnh nhân này -> dừng luồng (theo note).');
+    } else {
+      throw new Error('Không xác định được trạng thái màn Đơn thuốc ra viện (web chưa load?).');
     }
-    await page.getByRole('button', { name: /Tạo tờ điều trị đơn thuốc ra viện/i }).first().click();
-    // Chờ form mở (ô Chọn thuốc xuất hiện)
-    await page.getByPlaceholder(/Chọn thuốc/i).first().waitFor({ state: 'visible', timeout: 15000 });
   });
 }
 
