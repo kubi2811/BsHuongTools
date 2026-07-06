@@ -82,15 +82,38 @@ export async function moDanhSachNoiTru(page: Page): Promise<void> {
   });
 }
 
+// Reset TOÀN BỘ bộ lọc ở Danh sách người bệnh nội trú trước khi tìm mới.
+// QUAN TRỌNG: các luồng dùng ô lọc KHÁC nhau (luồng 1 tìm theo TÊN, luồng 4/5 theo MÃ BA).
+// Nếu luồng trước để lại giá trị ở ô Mã bệnh án thì lần sau tìm theo tên sẽ bị lọc chồng
+// (vừa tên vừa mã) -> ra RỖNG. Nên phải bấm "Hủy tìm kiếm" + xóa sạch cả ô tên lẫn ô Mã BA.
+export async function resetBoLocTimKiem(page: Page): Promise<void> {
+  const huy = page.getByRole('button', { name: /Hủy tìm kiếm/i }).first();
+  if (await huy.isVisible().catch(() => false)) {
+    await huy.click();
+    await page.waitForTimeout(1000);
+  }
+  // Xóa sạch mọi ô lọc còn dính giá trị từ luồng trước (tên NB + Mã bệnh án / Mã NB)
+  for (const re of [/Tìm.*tên NB/i, /^Mã bệnh án$/i, /^Mã NB$/i]) {
+    const o = page.getByPlaceholder(re).first();
+    if (await o.count()) {
+      const v = (await o.inputValue().catch(() => '')) || '';
+      if (v.trim()) await nhapSach(page, o, '');
+    }
+  }
+  await page.waitForTimeout(400);
+}
+
 // Tìm bệnh nhân theo tên (rule: "CB + tên") rồi mở hồ sơ đứa con.
-// Chống dính cache: xóa sạch ô tìm, CHỜ ĐÚNG TÊN vừa nhập hiện ra rồi mới click dòng đó.
+// Chống dính cache: reset bộ lọc, xóa sạch ô tìm, CHỜ ĐÚNG TÊN vừa nhập hiện ra rồi mới click.
 export async function timVaMoBenhNhan(page: Page, tenBenhNhan: string): Promise<void> {
   // Regex khớp đúng tên vừa tìm (vd "CB <tên bệnh nhân>") - dùng để chờ & click đúng dòng
   const bnRe = new RegExp(tenBenhNhan.trim().replace(/\s+/g, '\\s+'), 'i');
 
   await step(page, `Tìm bệnh nhân "${tenBenhNhan}"`, async () => {
+    // Reset bộ lọc cũ: xóa mã BA / tên dính từ luồng trước -> tránh lọc chồng ra RỖNG
+    await resetBoLocTimKiem(page);
     const search = page.getByPlaceholder(/Tìm.*tên NB/i).first();
-    // Nhập SẠCH + kiểm tra đúng tên (chống dính cache mã BA/tên từ luồng trước)
+    // Nhập SẠCH + kiểm tra đúng tên
     await nhapSach(page, search, tenBenhNhan);
     await search.press('Enter');
     // ĐỢI đúng tên vừa tìm hiện ra trong bảng (mạng yếu / kết quả cũ chưa cập nhật)

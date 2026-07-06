@@ -2,7 +2,7 @@
 // Dữ liệu combo/thuốc mã hóa theo note (mã thuốc, số lượng, liều, cách dùng).
 import { type Page } from 'playwright';
 import { step, checkpoint, nhapSach } from './helpers.js';
-import { chonKhoaLamViec, setNgayGio, moTrangHIS } from './flow1.js';
+import { chonKhoaLamViec, setNgayGio, moTrangHIS, resetBoLocTimKiem } from './flow1.js';
 import { config } from './config.js';
 
 // Mở bệnh nhân theo MÃ BỆNH ÁN (duy nhất). CÓ VERIFY đúng BN (an toàn - không thao tác nhầm).
@@ -17,12 +17,8 @@ export async function moBenhNhanTheoMaBA(page: Page, maBA: string): Promise<void
     await page.waitForTimeout(1000);
     await chonKhoaLamViec(page);
 
-    // Reset bộ lọc cũ (SPA hay kẹt kết quả trước) bằng nút "Hủy tìm kiếm" nếu có
-    const huy = page.getByRole('button', { name: /Hủy tìm kiếm/i }).first();
-    if (await huy.isVisible().catch(() => false)) {
-      await huy.click();
-      await page.waitForTimeout(1200);
-    }
+    // Reset TOÀN BỘ bộ lọc cũ (xóa cả ô TÊN dính từ luồng 1 lẫn mã cũ) -> tránh lọc chồng
+    await resetBoLocTimKiem(page);
 
     // Gõ vào Ô RIÊNG "Mã bệnh án" (lọc chính xác theo mã BA duy nhất) - nhập SẠCH + verify
     const s = page.getByPlaceholder(/^Mã bệnh án$/i).first();
