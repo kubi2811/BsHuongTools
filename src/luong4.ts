@@ -2,7 +2,7 @@
 // Dữ liệu combo/thuốc mã hóa theo note (mã thuốc, số lượng, liều, cách dùng).
 import { type Page } from 'playwright';
 import { step, checkpoint, nhapSach } from './helpers.js';
-import { chonKhoaLamViec, setNgayGio } from './flow1.js';
+import { chonKhoaLamViec, setNgayGio, moTrangHIS } from './flow1.js';
 import { config } from './config.js';
 
 // Mở bệnh nhân theo MÃ BỆNH ÁN (duy nhất). CÓ VERIFY đúng BN (an toàn - không thao tác nhầm).
@@ -12,9 +12,9 @@ export async function moBenhNhanTheoMaBA(page: Page, maBA: string): Promise<void
   const listUrl = config.hisUrl.replace(/\/$/, '') + '/quan-ly-noi-tru/danh-sach-nguoi-benh-noi-tru';
 
   await step(page, `Tìm & mở BN theo Mã BA = ${maBA} (có verify an toàn)`, async () => {
-    // Điều hướng lại danh sách (fresh mỗi lần thử)
-    await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(2000);
+    // Điều hướng lại danh sách (fresh mỗi lần thử) - tự đăng nhập lại nếu session hết hạn
+    await moTrangHIS(page, listUrl);
+    await page.waitForTimeout(1000);
     await chonKhoaLamViec(page);
 
     // Reset bộ lọc cũ (SPA hay kẹt kết quả trước) bằng nút "Hủy tìm kiếm" nếu có
@@ -86,8 +86,8 @@ export const COMBO_CHON: Record<string, string[]> = {
 export async function moTabDonThuocRaVien(page: Page): Promise<void> {
   await step(page, 'Mở tab "Đơn thuốc ra viện"', async () => {
     const url = page.url().split('?')[0] + '?tab=9';
-    await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(2500);
+    await moTrangHIS(page, url);
+    await page.waitForTimeout(1000);
     // Chờ khu vực đơn thuốc load (nút Tạo hoặc thông báo "Chưa tạo")
     await page.getByText(/đơn thuốc ra viện/i).first().waitFor({ state: 'visible', timeout: 15000 });
   }, { retries: 2 });

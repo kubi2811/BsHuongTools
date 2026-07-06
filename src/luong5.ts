@@ -4,7 +4,7 @@ import { type Page } from 'playwright';
 import { step, chupManHinh } from './helpers.js';
 import { config } from './config.js';
 import { moBenhNhanTheoMaBA } from './luong4.js';
-import { moToDieuTri, luuToDieuTri, setNgayGio, setTextarea, pickAntSelect } from './flow1.js';
+import { moToDieuTri, luuToDieuTri, setNgayGio, setTextarea, pickAntSelect, moTrangHIS } from './flow1.js';
 
 // Text diễn biến bệnh theo hướng xử trí (đúng note)
 const DIENBIEN_HAU_PHAU = 'Tổng trạng không suy dinh dưỡng. Tiêu được. Tiểu được. Bụng mềm. Vết mổ khô. Tử cung co hồi khá. Sản dịch sậm.';
@@ -24,7 +24,7 @@ export async function docCachThucDe(page: Page, maBA: string): Promise<QuyetDinh
   const idDetail = page.url().split('/').pop()!.split('?')[0];
 
   await step(page, 'Vào chi tiết Thông tin con', async () => {
-    await page.goto(config.hisUrl.replace(/\/$/, '') + '/quan-ly-noi-tru/chi-tiet-nguoi-benh-noi-tru/thong-tin-con/chi-tiet/' + idDetail, { waitUntil: 'domcontentloaded' });
+    await moTrangHIS(page, config.hisUrl.replace(/\/$/, '') + '/quan-ly-noi-tru/chi-tiet-nguoi-benh-noi-tru/thong-tin-con/chi-tiet/' + idDetail);
     // Chờ có nhãn "Cách thức đẻ" (KHÔNG click mở section - dễ đóng lại)
     await page.getByText(/Cách thức đẻ/i).first().waitFor({ state: 'attached', timeout: 15000 });
     await page.waitForTimeout(500);
@@ -103,8 +103,8 @@ export async function chayLuong5(
   // 2) Quay lại hồ sơ MẸ, mở tab Tờ điều trị
   const idDetail = page.url().split('/').pop()!.split('?')[0];
   await step(page, 'Về hồ sơ mẹ (tab Tờ điều trị)', async () => {
-    await page.goto(config.hisUrl.replace(/\/$/, '') + '/quan-ly-noi-tru/chi-tiet-nguoi-benh-noi-tru/' + idDetail + '?tab=2', { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(3000);
+    await moTrangHIS(page, config.hisUrl.replace(/\/$/, '') + '/quan-ly-noi-tru/chi-tiet-nguoi-benh-noi-tru/' + idDetail + '?tab=2');
+    await page.waitForTimeout(1500);
   }, { retries: 2 });
 
   await moToDieuTri(page);

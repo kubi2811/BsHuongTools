@@ -3,7 +3,22 @@
 import { type Page } from 'playwright';
 import { config } from './config.js';
 import { step, chupManHinh, checkpoint, nhapSach, xacNhanPopupNeuCo } from './helpers.js';
+import { dangNhapLaiNeuCan, dongThongBao } from './login.js';
 import path from 'node:path';
+
+// Điều hướng tới 1 trang HIS an toàn: nếu session hết hạn (bị đá về login) -> tự đăng
+// nhập lại rồi vào lại đúng trang. Đóng luôn popup "Thông báo" nếu HIS bật lên.
+// Dùng thay cho page.goto ở mọi chỗ điều hướng để "cover" bug lâu lâu bị logout.
+export async function moTrangHIS(page: Page, url: string): Promise<void> {
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1500);
+  if (await dangNhapLaiNeuCan(page)) {
+    // Vừa đăng nhập lại -> vào lại đúng trang cần
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(1500);
+  }
+  await dongThongBao(page);
+}
 
 // ---- Tiện ích điền theo NHÃN (locator tương đối, không phụ thuộc id GUID) ----
 
@@ -63,8 +78,7 @@ export async function chonKhoaLamViec(page: Page): Promise<void> {
 export async function moDanhSachNoiTru(page: Page): Promise<void> {
   await step(page, 'Mở Danh sách người bệnh nội trú', async () => {
     const url = config.hisUrl.replace(/\/$/, '') + '/quan-ly-noi-tru/danh-sach-nguoi-benh-noi-tru';
-    await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(1500);
+    await moTrangHIS(page, url); // tự đăng nhập lại nếu session hết hạn
   });
 }
 
@@ -253,8 +267,8 @@ export async function chiDinhDichVu(page: Page, maDV = 'PK022'): Promise<void> {
 // Mở trang sàng lọc, tìm BN, mở chi tiết phiếu (linh hoạt: Gọi khám hoặc icon xem)
 export async function moChiTietSangLoc(page: Page, ten: string): Promise<void> {
   await step(page, 'Mở Danh sách khám sàng lọc', async () => {
-    await page.goto(config.hisUrl.replace(/\/$/, '') + '/quan-ly-tiem-chung/danh-sach-kham-sang-loc', { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(2200);
+    await moTrangHIS(page, config.hisUrl.replace(/\/$/, '') + '/quan-ly-tiem-chung/danh-sach-kham-sang-loc');
+    await page.waitForTimeout(700);
   });
   await chonKhoaLamViec(page);
   const nameRe = new RegExp(ten.trim().replace(/\s+/g, '\\s+'), 'i');
