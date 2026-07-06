@@ -424,7 +424,7 @@ export interface Flow1Data {
 export async function chayLuong1(
   page: Page,
   data: Flow1Data,
-  onConfirm: (screenshot: string) => Promise<boolean>
+  _onConfirm: (screenshot: string) => Promise<boolean>
 ): Promise<void> {
   // STAGE 1: Tờ điều trị
   await moDanhSachNoiTru(page);
@@ -444,12 +444,10 @@ export async function chayLuong1(
   // STAGE 4: Chỉ định vắc xin (dừng trước Lưu cuối)
   await chiDinhVaccine(page, data.vaccines);
 
-  // ĐIỂM XÁC NHẬN trước nút Lưu CUỐI CÙNG
-  const shot = await chupManHinh(page, 'xac-nhan-truoc-luu-cuoi');
-  const choPhep = await onConfirm(shot);
-  if (choPhep) {
-    await luuVaccineCuoi(page);
-  }
+  // Luồng 1 (tiêm chủng): theo yêu cầu bác sĩ -> TỰ bấm Lưu CUỐI luôn, KHÔNG chờ xác nhận.
+  // Vẫn chụp ảnh trước khi Lưu để lưu vết trên timeline (audit).
+  await checkpoint(page, 'Trước khi Lưu cuối (tự lưu - luồng 1)');
+  await luuVaccineCuoi(page);
 }
 
 // ---- KHÁM CHUYÊN KHOA (dùng cho luồng 2: khám sơ sinh, luồng 3: PHCN) ----
