@@ -2,7 +2,7 @@
 // Chạy headed để bác sĩ theo dõi. Mỗi giai đoạn xong sẽ dò DOM trang kế tiếp.
 import { type Page } from 'playwright';
 import { config } from './config.js';
-import { step, chupManHinh, checkpoint } from './helpers.js';
+import { step, chupManHinh, checkpoint, nhapSach, xacNhanPopupNeuCo } from './helpers.js';
 import path from 'node:path';
 
 // ---- Tiện ích điền theo NHÃN (locator tương đối, không phụ thuộc id GUID) ----
@@ -76,10 +76,8 @@ export async function timVaMoBenhNhan(page: Page, tenBenhNhan: string): Promise<
 
   await step(page, `Tìm bệnh nhân "${tenBenhNhan}"`, async () => {
     const search = page.getByPlaceholder(/Tìm.*tên NB/i).first();
-    await search.click();
-    await search.press('Control+a'); // xóa sạch tên cũ (tránh dính cache)
-    await search.press('Delete');
-    await search.fill(tenBenhNhan);
+    // Nhập SẠCH + kiểm tra đúng tên (chống dính cache mã BA/tên từ luồng trước)
+    await nhapSach(page, search, tenBenhNhan);
     await search.press('Enter');
     // ĐỢI đúng tên vừa tìm hiện ra trong bảng (mạng yếu / kết quả cũ chưa cập nhật)
     await page.getByText(bnRe).first().waitFor({ state: 'visible', timeout: 15000 });
@@ -182,7 +180,10 @@ export async function luuToDieuTri(page: Page): Promise<void> {
   await checkpoint(page, 'Trước khi Lưu tờ điều trị');
   await step(page, 'Bấm Lưu Tờ điều trị', async () => {
     await page.getByRole('button', { name: /^Lưu$/i }).last().click();
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1500);
+    // Nếu đã có tờ điều trị cùng ngày -> HIS hỏi "Xác nhận tạo trùng" -> bấm Xác nhận (theo yêu cầu)
+    await xacNhanPopupNeuCo(page);
+    await page.waitForTimeout(800);
   });
 }
 
@@ -191,6 +192,8 @@ export async function chiDinhDichVu(page: Page, maDV = 'PK022'): Promise<void> {
   const dialog = page.getByRole('dialog').filter({ hasText: /Chỉ định dịch vụ kỹ thuật/i });
 
   await step(page, `Mở hộp thoại chỉ định dịch vụ (F2), gõ ${maDV}`, async () => {
+    // Đóng popup "tạo trùng tờ điều trị" nếu còn sót lại (nó che ô F2 -> scroll timeout)
+    await xacNhanPopupNeuCo(page, 1000);
     const f2 = page.getByPlaceholder(/F2/i).first();
     await f2.scrollIntoViewIfNeeded();
     await f2.click();
@@ -264,10 +267,8 @@ export async function moChiTietSangLoc(page: Page, ten: string): Promise<void> {
   }, { retries: 2 });
   await step(page, `Tìm "${ten}" trên trang sàng lọc`, async () => {
     const s = page.getByPlaceholder(/Tìm mã tiêm chủng/i).first();
-    await s.click();
-    await s.press('Control+a'); // xóa tên cũ (chống dính cache)
-    await s.press('Delete');
-    await s.fill(ten);
+    // Nhập SẠCH + kiểm tra đúng tên (chống dính cache từ luồng trước)
+    await nhapSach(page, s, ten);
     await s.press('Enter');
     // Đợi đúng tên vừa tìm hiện ra
     await page.getByText(nameRe).first().waitFor({ state: 'visible', timeout: 15000 });

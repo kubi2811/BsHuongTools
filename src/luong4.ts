@@ -1,7 +1,7 @@
 // LUỒNG 4: Đánh toa xuất viện (kê đơn thuốc ra viện).
 // Dữ liệu combo/thuốc mã hóa theo note (mã thuốc, số lượng, liều, cách dùng).
 import { type Page } from 'playwright';
-import { step, checkpoint } from './helpers.js';
+import { step, checkpoint, nhapSach } from './helpers.js';
 import { chonKhoaLamViec, setNgayGio } from './flow1.js';
 import { config } from './config.js';
 
@@ -24,14 +24,10 @@ export async function moBenhNhanTheoMaBA(page: Page, maBA: string): Promise<void
       await page.waitForTimeout(1200);
     }
 
-    // Gõ vào Ô RIÊNG "Mã bệnh án" (lọc chính xác theo mã BA duy nhất)
+    // Gõ vào Ô RIÊNG "Mã bệnh án" (lọc chính xác theo mã BA duy nhất) - nhập SẠCH + verify
     const s = page.getByPlaceholder(/^Mã bệnh án$/i).first();
-    await s.click();
-    await s.press('Control+a');
-    await s.press('Delete');
+    await nhapSach(page, s, maBA);
     await page.waitForTimeout(300);
-    await s.pressSequentially(maBA, { delay: 70 });
-    await page.waitForTimeout(600);
     await s.press('Enter');
     await page.waitForTimeout(3000); // chờ kết quả cập nhật
 
@@ -175,10 +171,9 @@ export async function chonThuoc(page: Page, thuocList: ThuocRaVien[]): Promise<v
     }
 
     await step(page, `Tick thuốc ${t.ten} (${t.ma})`, async () => {
-      // Gõ vào ô tìm CỦA ĐÚNG SECTION (kho=nth0, nhà thuốc=nth1)
+      // Gõ vào ô tìm CỦA ĐÚNG SECTION (kho=nth0, nhà thuốc=nth1) - nhập SẠCH + verify
       const s = dialog.getByPlaceholder(/Nhập tên thuốc/i).nth(sectionIdx);
-      await s.click();
-      await s.fill(t.ma);
+      await nhapSach(page, s, t.ma);
       await page.waitForTimeout(2000);
       const row = dialog.locator('tr.ant-table-row').filter({ hasText: t.ma }).first();
       await row.locator('.ant-checkbox-wrapper').first().waitFor({ state: 'visible', timeout: 12000 });

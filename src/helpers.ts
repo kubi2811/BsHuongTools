@@ -1,8 +1,42 @@
 // Tiện ích dùng chung cho các luồng: chụp màn hình theo bước, dò DOM.
 import fs from 'node:fs';
 import path from 'node:path';
-import { type Page } from 'playwright';
+import { type Page, type Locator } from 'playwright';
 import { config } from './config.js';
+
+// Nhập text SẠCH: xóa hết giá trị cũ (chống dính cache từ luồng trước) rồi gõ + KIỂM TRA đúng.
+export async function nhapSach(page: Page, o: Locator, value: string): Promise<void> {
+  for (let lan = 0; lan < 3; lan++) {
+    await o.click();
+    await o.press('Control+a');
+    await o.press('Delete');
+    await page.waitForTimeout(150);
+    if (value) await o.pressSequentially(value, { delay: 35 });
+    await page.waitForTimeout(200);
+    if ((await o.inputValue().catch(() => '')) === value) return;
+  }
+  console.warn(`  ⚠️  Ô không giữ đúng giá trị "${value}" sau 3 lần thử (SPA đè cache?).`);
+}
+
+// Nếu HIS hiện popup xác nhận (vd "Đã có tờ điều trị ngày ... Xác nhận tạo trùng tờ điều trị")
+// thì bấm "Xác nhận" để tiếp tục (theo yêu cầu bác sĩ). Chỉ bấm khi popup có nút "Xác nhận"
+// -> KHÔNG đụng nhầm popup cảnh báo chỉ có nút Đóng/Bỏ qua. Trả về true nếu đã bấm.
+export async function xacNhanPopupNeuCo(page: Page, timeoutMs = 2500): Promise<boolean> {
+  const dlg = page.getByRole('dialog')
+    .filter({ hasText: /Xác nhận|Cảnh báo|tạo trùng|Đã có tờ điều trị/i }).first();
+  if (!(await dlg.isVisible().catch(() => false))) {
+    await dlg.waitFor({ state: 'visible', timeout: timeoutMs }).catch(() => {});
+  }
+  if (!(await dlg.isVisible().catch(() => false))) return false;
+  const btn = dlg.getByRole('button', { name: /^\s*Xác nhận\s*$/i }).first();
+  if (await btn.count()) {
+    await btn.click();
+    await page.waitForTimeout(1200);
+    console.log('  ✓ Đã bấm "Xác nhận" trên popup (tạo trùng/cảnh báo).');
+    return true;
+  }
+  return false;
+}
 
 // Hook báo tiến độ để server ghi log + hiển thị lên UI (đặt bởi executor)
 export type StepReport = { name: string; screenshot: string; level: 'info' | 'error'; durationMs: number; error?: string };
