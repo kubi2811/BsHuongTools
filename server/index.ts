@@ -12,6 +12,7 @@ import { setStepReporter } from '../src/helpers.js';
 import { chayLuong1, chayLuongKhamChuyenKhoa, VACCINE_MAC_DINH, type Vaccine } from '../src/flow1.js';
 import { chayLuong4, COMBO_CHON } from '../src/luong4.js';
 import { chayLuong5 } from '../src/luong5.js';
+import { chayLuong6 } from '../src/luong6.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -118,6 +119,17 @@ const WORKFLOWS = [
       { key: 'ngay', label: 'Ngày y lệnh (DD/MM/YYYY)', type: 'text', required: true },
     ],
   },
+  {
+    id: 'sang-loc-be',
+    name: 'Nhập sàng lọc bé (Luồng 6)',
+    icon: '🧪',
+    patientNameField: 'maBA',
+    fields: [
+      { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
+      { key: 'ngay', label: 'Ngày y lệnh (DD/MM/YYYY)', type: 'text', required: true },
+      { key: 'loaiXN', label: 'Loại XN sàng lọc (chọn 1 hoặc cả 2)', type: 'multiselect', options: ['Thường quy', 'Mở rộng'], default: ['Thường quy', 'Mở rộng'], required: true },
+    ],
+  },
 ];
 
 // ---------- Quản lý browser (1 context bền vững, dùng lại) ----------
@@ -204,6 +216,11 @@ async function processQueue(): Promise<void> {
     } else if (row.workflow_id === 'nhap-thuoc') {
       // Luồng 5: tạo tờ điều trị mẹ theo cách thức đẻ, dừng ở điểm xác nhận trước Lưu
       await chayLuong5(page, { maBA: data.maBA, ngay: data.ngay }, onConfirm);
+    } else if (row.workflow_id === 'sang-loc-be') {
+      // Luồng 6: map loại XN -> mã dịch vụ (Thường quy=XN000530, Mở rộng=XN000536); chọn 1 hoặc cả 2
+      const mapXN: Record<string, string> = { 'Thường quy': 'XN000530', 'Mở rộng': 'XN000536' };
+      const codes = (data.loaiXN || []).map((x: string) => mapXN[x]).filter(Boolean);
+      await chayLuong6(page, { maBA: data.maBA, ngay: data.ngay, codes }, onConfirm);
     } else {
       throw new Error('Workflow chưa hỗ trợ: ' + row.workflow_id);
     }

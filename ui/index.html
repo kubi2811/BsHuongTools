@@ -133,11 +133,12 @@ async function renderForm(wfId) {
   const fbox = c.querySelector('#fields');
   w.fields.forEach(f => {
     if (f.type === 'multiselect') {
-      formState[f.key] = []; // mặc định chưa chọn -> user tự pick
+      formState[f.key] = Array.isArray(f.default) ? [...f.default] : []; // mặc định (nếu có) hoặc trống
       const wrap = $(`<div><label>${f.label}</label><div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"></div></div>`);
       const row = wrap.querySelector('div > div');
       f.options.forEach(opt => {
-        const chip = $(`<div class="vac" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
+        const on = formState[f.key].includes(opt);
+        const chip = $(`<div class="vac${on ? ' on' : ''}" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
         chip.onclick = () => {
           const arr = formState[f.key]; const i = arr.indexOf(opt);
           if (i >= 0) arr.splice(i, 1); else arr.push(opt);
@@ -146,9 +147,34 @@ async function renderForm(wfId) {
         row.appendChild(chip);
       });
       fbox.appendChild(wrap);
+    } else if (f.type === 'select') {
+      formState[f.key] = ''; // chọn 1 (radio dạng chip)
+      const wrap = $(`<div><label>${f.label}</label><div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"></div></div>`);
+      const row = wrap.querySelector('div > div');
+      const chips = [];
+      f.options.forEach(opt => {
+        const chip = $(`<div class="vac" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
+        chip.onclick = () => {
+          formState[f.key] = opt;
+          chips.forEach(c => c.classList.toggle('on', c === chip));
+        };
+        chips.push(chip); row.appendChild(chip);
+      });
+      fbox.appendChild(wrap);
+    } else if (f.key === 'ngay') {
+      // Ngày y lệnh: chọn trên lịch (mặc định HÔM NAY). Lưu dạng DD/MM/YYYY; giờ mặc định 09:00:00 do bot điền.
+      const p = n => String(n).padStart(2, '0');
+      const t = new Date();
+      const isoLocal = t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate());
+      const toVN = s => { const [y, m, d] = s.split('-'); return d + '/' + m + '/' + y; };
+      formState[f.key] = toVN(isoLocal); // mặc định hôm nay
+      const wrap = $(`<div><label>${f.label}</label><input type="date" value="${isoLocal}" /></div>`);
+      const inp = wrap.querySelector('input');
+      inp.onchange = () => { formState[f.key] = inp.value ? toVN(inp.value) : ''; };
+      fbox.appendChild(wrap);
     } else {
       formState[f.key] = '';
-      const ph = f.key === 'ngay' ? 'vd: 06/07/2026' : (f.key === 'hoTen' ? 'vd: nguyễn văn a' : '');
+      const ph = f.key === 'hoTen' ? 'vd: nguyễn văn a' : '';
       const wrap = $(`<div><label>${f.label}</label><input type="text" placeholder="${ph}" /></div>`);
       const inp = wrap.querySelector('input');
       inp.oninput = () => { formState[f.key] = inp.value.trim(); };
