@@ -1,0 +1,102 @@
+// LUỒNG 2: Khám sơ sinh (khám chuyên khoa trên hồ sơ CON). Tự Lưu, KHÔNG dừng xác nhận.
+// Mở hồ sơ con (như L7) -> tờ điều trị (Z38.0, hướng xử trí "Khám bé", giờ 08:30) -> Lưu
+// -> F2 chỉ định dịch vụ khám (theo loại khám) -> Đồng ý -> đóng cảnh báo
+// -> Khám chuyên khoa (mời khoa 3050 sơ sinh + nội dung theo loại khám) -> Xác nhận -> Lưu.
+import { type Page } from 'playwright';
+import { step, checkpoint, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
+import { moToDieuTri, setTextarea, pickAntSelect, luuToDieuTri, moKhamChuyenKhoa } from './flow1.js';
+import { timVaMoConTheoMaBA, setNgayGioLich } from './luong6.js';
+import { datChanDoanZ380 } from './luong7.js';
+
+// Loại khám -> mã dịch vụ (bước F2) + nội dung yêu cầu (bước Khám chuyên khoa)
+const LOAI_KHAM: Record<string, { code: string; noiDung: string }> = {
+  'Khám tim':       { code: 'KB0302',   noiDung: 'khám SLSS và tầm soát bệnh tim bẩm sinh' },
+  'Khám trẻ DV':    { code: 'KB0090',   noiDung: 'khám trẻ dịch vụ theo yêu cầu' },
+  'Khám chiếu đèn': { code: 'PTTT1314', noiDung: 'khám và chiếu đèn trẻ SS' },
+};
+
+const GIO_L2 = '08:30:00'; // giờ y lệnh mặc định luồng 2
+
+async function dienFormLuong2(page: Page, ngay: string): Promise<void> {
+  await step(page, `Ngày y lệnh = ${ngay} ${GIO_L2}`, async () => {
+    await setNgayGioLich(page, 'Ngày y lệnh', ngay, GIO_L2);
+  });
+  await datChanDoanZ380(page); // xóa hết chẩn đoán cũ + đặt Z38.0 + verify
+  await step(page, 'Diễn biến bệnh = "Bé hồng, khóc tốt"', async () => {
+    await setTextarea(page, 'Diễn biến bệnh', 'Bé hồng, khóc tốt');
+  });
+  await step(page, 'Hướng xử trí = "Khám bé"', async () => {
+    await setTextarea(page, 'Hướng xử trí', 'Khám bé');
+  });
+  await step(page, 'Chế độ chăm sóc = "Chế độ CS Cấp III"', async () => {
+    await pickAntSelect(page, 'Chế độ chăm sóc', 'Chế độ CS Cấp III');
+  });
+}
+
+// F2 -> tick mã dịch vụ khám -> Đồng ý -> đóng cảnh báo (KHÔNG Lưu ở bước này)
+async function chiDinhDichVuKham(page: Page, code: string): Promise<void> {
+  const dialog = page.getByRole('dialog').filter({ hasText: /Chỉ định dịch vụ kỹ thuật/i });
+  await step(page, `Mở hộp thoại chỉ định DVKT (F2), tick ${code}`, async () => {
+    await xacNhanPopupNeuCo(page, 800);
+    const f2 = page.getByPlaceholder(/F2/i).first();
+    await f2.scrollIntoViewIfNeeded();
+    await f2.click();
+    await dialog.waitFor({ state: 'visible', timeout: 15000 });
+    const s = dialog.getByPlaceholder(/Chọn dịch vụ/i).first();
+    await nhapSach(page, s, code);
+    await page.waitForTimeout(1800);
+    const row = dialog.locator('.ant-row, tr, [class*="item"]').filter({ hasText: new RegExp(code, 'i') }).first();
+    const box = row.locator('.ant-checkbox').first();
+    if (await box.count()) await box.click();
+    else await row.getByText(new RegExp(code, 'i')).first().click();
+    await page.waitForTimeout(900);
+    await xacNhanPopupNeuCo(page, 1000); // nếu có thông báo -> Xác nhận
+  }, { retries: 2 });
+
+  await step(page, 'Bấm Đồng ý (dịch vụ khám)', async () => {
+    await dialog.getByRole('button', { name: /Đồng ý/i }).first().click();
+    await page.waitForTimeout(2000);
+    await xacNhanPopupNeuCo(page, 800);
+    await dongCanhBaoNeuCo(page); // nếu có cảnh báo -> Đóng
+  });
+}
+
+export interface Flow2Data {
+  maBA: string;
+  ngay: string;     // DD/MM/YYYY (giờ mặc định 08:30:00)
+  loaiKham: string; // 'Khám tim' | 'Khám trẻ DV' | 'Khám chiếu đèn'
+}
+
+// Tự chạy hết, KHÔNG có điểm xác nhận.
+export async function chayLuong2(page: Page, data: Flow2Data): Promise<void> {
+  const lk = LOAI_KHAM[data.loaiKham];
+  if (!lk) throw new Error('Loại khám không hợp lệ: ' + data.loaiKham);
+
+  // 1-5) Mở hồ sơ CON + tờ điều trị
+  await timVaMoConTheoMaBA(page, data.maBA);
+  await moToDieuTri(page);
+
+  // 6-11) Điền form (Z38.0, hướng xử trí "Khám bé", ...) -> Lưu
+  await dienFormLuong2(page, data.ngay);
+  await luuToDieuTri(page);
+  await step(page, 'Kiểm tra tờ điều trị đã lưu', async () => {
+    const ok = await page.getByPlaceholder(/F2/i).first()
+      .waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false);
+    if (!ok) throw new Error('Tờ điều trị CHƯA lưu được (ngày y lệnh quá sớm/trùng?). Dừng an toàn.');
+  });
+
+  // 12-15) F2 chỉ định dịch vụ khám theo loại
+  await chiDinhDichVuKham(page, lk.code);
+
+  // 16-19) Khám chuyên khoa: mời khoa 3050 (sơ sinh) + nội dung theo loại khám -> Xác nhận
+  await moKhamChuyenKhoa(page, '3050', lk.noiDung);
+
+  // 20) Lưu cuối
+  await checkpoint(page, 'Trước khi Lưu cuối (khám chuyên khoa)');
+  await step(page, 'Bấm Lưu CUỐI (khám chuyên khoa)', async () => {
+    await page.getByRole('button', { name: /^Lưu$/i }).last().click();
+    await page.waitForTimeout(2500);
+    await xacNhanPopupNeuCo(page, 800);
+    await dongCanhBaoNeuCo(page);
+  });
+}

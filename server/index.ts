@@ -9,7 +9,8 @@ import { chromium, type BrowserContext, type Page } from 'playwright';
 import { config, ROOT } from '../src/config.js';
 import { ensureLoggedIn } from '../src/login.js';
 import { setStepReporter } from '../src/helpers.js';
-import { chayLuong1, chayLuongKhamChuyenKhoa, VACCINE_MAC_DINH, type Vaccine } from '../src/flow1.js';
+import { chayLuongKhamChuyenKhoa } from '../src/flow1.js';
+import { chayLuong2 } from '../src/luong2.js';
 import { chayLuong4, COMBO_CHON } from '../src/luong4.js';
 import { chayLuong5 } from '../src/luong5.js';
 import { chayLuong6 } from '../src/luong6.js';
@@ -76,21 +77,28 @@ const F_HOTEN = { key: 'hoTen', label: 'Tên bệnh nhân (khỏi gõ "CB")', ty
 const F_NGAY = { key: 'ngay', label: 'Ngày y lệnh (DD/MM/YYYY)', type: 'text', required: true };
 const WORKFLOWS = [
   {
+    // Luồng 1 = code luồng "khám bé" (chayLuong7): mở hồ sơ con, tiêm chủng, kết thúc khám, đóng hồ sơ.
     id: 'tiem-chung',
     name: 'Chích vaccine (Luồng 1)',
     icon: '💉',
-    patientNameField: 'hoTen',
+    patientNameField: 'maBA',
     fields: [
-      F_HOTEN, F_NGAY,
-      { key: 'vaccines', label: 'Vaccine', type: 'multiselect', options: ['BCG', 'VGB'], required: true },
+      { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
+      { key: 'ngay', label: 'Ngày y lệnh', type: 'text', required: true },
+      { key: 'gio', label: 'Giờ y lệnh', type: 'time', default: '08:00:00', required: true },
+      { key: 'vaccines', label: 'Vaccine (tự chọn)', type: 'multiselect', options: ['BCG', 'VGB'], required: true },
     ],
   },
   {
     id: 'kham-so-sinh',
     name: 'Khám sơ sinh (Luồng 2)',
     icon: '👶',
-    patientNameField: 'hoTen',
-    fields: [F_HOTEN, F_NGAY],
+    patientNameField: 'maBA',
+    fields: [
+      { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
+      { key: 'ngay', label: 'Ngày y lệnh', type: 'text', required: true },
+      { key: 'loaiKham', label: 'Loại khám', type: 'select', options: ['Khám tim', 'Khám trẻ DV', 'Khám chiếu đèn'], required: true },
+    ],
   },
   {
     id: 'kham-phcn',
@@ -129,18 +137,6 @@ const WORKFLOWS = [
       { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
       { key: 'ngay', label: 'Ngày y lệnh (DD/MM/YYYY)', type: 'text', required: true },
       { key: 'loaiXN', label: 'Loại XN sàng lọc (chọn 1 hoặc cả 2)', type: 'multiselect', options: ['Thường quy', 'Mở rộng'], default: ['Thường quy', 'Mở rộng'], required: true },
-    ],
-  },
-  {
-    id: 'kham-be',
-    name: 'Khám bé (Luồng 7)',
-    icon: '🍼',
-    patientNameField: 'maBA',
-    fields: [
-      { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
-      { key: 'ngay', label: 'Ngày y lệnh', type: 'text', required: true },
-      { key: 'gio', label: 'Giờ y lệnh', type: 'time', default: '08:00:00', required: true },
-      { key: 'vaccines', label: 'Vaccine (tự chọn)', type: 'multiselect', options: ['BCG', 'VGB'], required: true },
     ],
   },
 ];
@@ -217,10 +213,12 @@ async function processQueue(): Promise<void> {
 
     // Chọn orchestrator theo loại luồng
     if (row.workflow_id === 'tiem-chung') {
-      const vaccines: Vaccine[] = (data.vaccines || []).map((v: string) => VACCINE_MAC_DINH[v]).filter(Boolean);
-      await chayLuong1(page, { tenBenhNhan, ngay: data.ngay, vaccines }, onConfirm);
+      // Luồng 1 = code luồng khám bé (chayLuong7): mở hồ sơ con + tiêm chủng + kết thúc khám. Tự chạy hết.
+      const vaccines: VaccineL7[] = (data.vaccines || []).map((v: string) => VACCINE_L7[v]).filter(Boolean);
+      await chayLuong7(page, { maBA: data.maBA, ngay: data.ngay, gio: data.gio, vaccines });
     } else if (row.workflow_id === 'kham-so-sinh') {
-      await chayLuongKhamChuyenKhoa(page, { tenBenhNhan, ngay: data.ngay, gio: '08:01:00', huongXuTri: 'Khám sơ sinh', maKhoa: '3050', noiDung: 'Khám trẻ dịch vụ theo yêu cầu' }, onConfirm);
+      // Luồng 2: khám chuyên khoa sơ sinh trên hồ sơ con (tự Lưu, không dừng)
+      await chayLuong2(page, { maBA: data.maBA, ngay: data.ngay, loaiKham: data.loaiKham });
     } else if (row.workflow_id === 'kham-phcn') {
       await chayLuongKhamChuyenKhoa(page, { tenBenhNhan, ngay: data.ngay, gio: '08:02:00', huongXuTri: 'Khám phục hồi chức năng', maKhoa: '4074', noiDung: '' }, onConfirm);
     } else if (row.workflow_id === 'don-thuoc-ra-vien') {
@@ -234,10 +232,6 @@ async function processQueue(): Promise<void> {
       const mapXN: Record<string, string> = { 'Thường quy': 'XN000530', 'Mở rộng': 'XN000536' };
       const codes = (data.loaiXN || []).map((x: string) => mapXN[x]).filter(Boolean);
       await chayLuong6(page, { maBA: data.maBA, ngay: data.ngay, codes }, onConfirm);
-    } else if (row.workflow_id === 'kham-be') {
-      // Luồng 7: khám bé + tiêm chủng trên hồ sơ con. KHÔNG có điểm xác nhận (chạy tự động hết).
-      const vaccines: VaccineL7[] = (data.vaccines || []).map((v: string) => VACCINE_L7[v]).filter(Boolean);
-      await chayLuong7(page, { maBA: data.maBA, ngay: data.ngay, gio: data.gio, vaccines });
     } else {
       throw new Error('Workflow chưa hỗ trợ: ' + row.workflow_id);
     }
