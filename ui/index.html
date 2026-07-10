@@ -55,6 +55,8 @@ const chip = (s) => `<span class="chip" style="background:${STATUS_COLOR[s]}22;c
 let view = { name:'home', jobId:null, wf:null };
 let WF = [];            // danh sách workflow (từ /api/workflows)
 let formState = {};     // giá trị đang nhập của form hiện tại
+let pickSel = [];       // các luồng đã chọn để chạy batch (theo thứ tự)
+let batchIds = [];      // id các job vừa tạo trong 1 batch
 
 async function render(name, arg) {
   view = { name, jobId: name==='job' ? arg : view.jobId, wf: name==='form' ? arg : view.wf };
@@ -62,6 +64,9 @@ async function render(name, arg) {
   if (name === 'login') return renderLogin();
   if (name === 'home') return renderHome();
   if (name === 'form') return renderForm(arg);
+  if (name === 'pick') return renderPick();
+  if (name === 'batchform') return renderBatchForm();
+  if (name === 'batch') return renderBatch();
   if (name === 'job') return renderJob(arg);
 }
 
@@ -94,6 +99,8 @@ async function renderHome(s, jobs) {
 
   const g = $(`<div class="card"><h2>Quy trình</h2><div id="wfs"></div>
     <div style="height:10px"></div>
+    <button class="btn-ok" id="batch">🔀 Chạy nhiều luồng liên tiếp</button>
+    <div style="height:10px"></div>
     <div class="row"><button class="btn-mut" id="open">Mở/Kiểm tra browser</button><button class="btn-mut" id="restart">Khởi động lại bot</button></div>
     </div>`);
   app.appendChild(g);
@@ -103,6 +110,7 @@ async function renderHome(s, jobs) {
     b.onclick = () => render('form', w.id);
     wfs.appendChild(b);
   });
+  g.querySelector('#batch').onclick = () => { pickSel = []; render('pick'); };
   g.querySelector('#open').onclick = async () => { g.querySelector('#open').textContent='Đang mở...'; await api('/api/system/open-browser',{method:'POST'}); renderHome(); };
   g.querySelector('#restart').onclick = async () => { await api('/api/system/restart-browser',{method:'POST'}); renderHome(); };
 
@@ -131,68 +139,7 @@ async function renderForm(wfId) {
     </div>`);
   app.appendChild(c);
   const fbox = c.querySelector('#fields');
-  w.fields.forEach(f => {
-    if (f.type === 'multiselect') {
-      formState[f.key] = Array.isArray(f.default) ? [...f.default] : []; // mặc định (nếu có) hoặc trống
-      const wrap = $(`<div><label>${f.label}</label><div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"></div></div>`);
-      const row = wrap.querySelector('div > div');
-      f.options.forEach(opt => {
-        const on = formState[f.key].includes(opt);
-        const chip = $(`<div class="vac${on ? ' on' : ''}" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
-        chip.onclick = () => {
-          const arr = formState[f.key]; const i = arr.indexOf(opt);
-          if (i >= 0) arr.splice(i, 1); else arr.push(opt);
-          chip.classList.toggle('on', arr.includes(opt));
-        };
-        row.appendChild(chip);
-      });
-      fbox.appendChild(wrap);
-    } else if (f.type === 'select') {
-      formState[f.key] = ''; // chọn 1 (radio dạng chip)
-      const wrap = $(`<div><label>${f.label}</label><div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"></div></div>`);
-      const row = wrap.querySelector('div > div');
-      const chips = [];
-      f.options.forEach(opt => {
-        const chip = $(`<div class="vac" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
-        chip.onclick = () => {
-          formState[f.key] = opt;
-          chips.forEach(c => c.classList.toggle('on', c === chip));
-        };
-        chips.push(chip); row.appendChild(chip);
-      });
-      fbox.appendChild(wrap);
-    } else if (f.type === 'time') {
-      // Giờ y lệnh: chọn giờ (HH:MM:SS). Native picker trả HH:MM -> tự thêm :00.
-      const def = f.default || '08:00:00';
-      formState[f.key] = def;
-      const wrap = $(`<div><label>${f.label}</label><input type="time" step="1" value="${def}" /></div>`);
-      const inp = wrap.querySelector('input');
-      inp.onchange = () => {
-        let v = inp.value || '';
-        if (v.length === 5) v += ':00'; // HH:MM -> HH:MM:SS
-        formState[f.key] = v;
-      };
-      fbox.appendChild(wrap);
-    } else if (f.key === 'ngay') {
-      // Ngày y lệnh: chọn trên lịch (mặc định HÔM NAY). Lưu dạng DD/MM/YYYY; giờ mặc định 09:00:00 do bot điền.
-      const p = n => String(n).padStart(2, '0');
-      const t = new Date();
-      const isoLocal = t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate());
-      const toVN = s => { const [y, m, d] = s.split('-'); return d + '/' + m + '/' + y; };
-      formState[f.key] = toVN(isoLocal); // mặc định hôm nay
-      const wrap = $(`<div><label>${f.label}</label><input type="date" value="${isoLocal}" /></div>`);
-      const inp = wrap.querySelector('input');
-      inp.onchange = () => { formState[f.key] = inp.value ? toVN(inp.value) : ''; };
-      fbox.appendChild(wrap);
-    } else {
-      formState[f.key] = '';
-      const ph = f.key === 'hoTen' ? 'vd: nguyễn văn a' : '';
-      const wrap = $(`<div><label>${f.label}</label><input type="text" placeholder="${ph}" /></div>`);
-      const inp = wrap.querySelector('input');
-      inp.oninput = () => { formState[f.key] = inp.value.trim(); };
-      fbox.appendChild(wrap);
-    }
-  });
+  w.fields.forEach(f => renderField(fbox, f));
   c.querySelector('#run').onclick = async () => {
     for (const f of w.fields) {
       const v = formState[f.key];
@@ -202,6 +149,150 @@ async function renderForm(wfId) {
     const r = await api('/api/jobs', { method:'POST', body: JSON.stringify({ workflowId: w.id, data: { ...formState } }) });
     render('job', r.id);
   };
+}
+
+// Vẽ 1 field (dùng chung cho form 1 luồng và form gộp nhiều luồng). Ghi giá trị vào formState.
+function renderField(fbox, f) {
+  if (f.type === 'multiselect') {
+    formState[f.key] = Array.isArray(f.default) ? [...f.default] : [];
+    const wrap = $(`<div><label>${f.label}</label><div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"></div></div>`);
+    const row = wrap.querySelector('div > div');
+    f.options.forEach(opt => {
+      const on = formState[f.key].includes(opt);
+      const chip = $(`<div class="vac${on ? ' on' : ''}" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
+      chip.onclick = () => {
+        const arr = formState[f.key]; const i = arr.indexOf(opt);
+        if (i >= 0) arr.splice(i, 1); else arr.push(opt);
+        chip.classList.toggle('on', arr.includes(opt));
+      };
+      row.appendChild(chip);
+    });
+    fbox.appendChild(wrap);
+  } else if (f.type === 'select') {
+    formState[f.key] = '';
+    const wrap = $(`<div><label>${f.label}</label><div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"></div></div>`);
+    const row = wrap.querySelector('div > div');
+    const chips = [];
+    f.options.forEach(opt => {
+      const chip = $(`<div class="vac" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
+      chip.onclick = () => { formState[f.key] = opt; chips.forEach(c => c.classList.toggle('on', c === chip)); };
+      chips.push(chip); row.appendChild(chip);
+    });
+    fbox.appendChild(wrap);
+  } else if (f.type === 'time') {
+    const def = f.default || '08:00:00';
+    formState[f.key] = def;
+    const wrap = $(`<div><label>${f.label}</label><input type="time" step="1" value="${def}" /></div>`);
+    const inp = wrap.querySelector('input');
+    inp.onchange = () => { let v = inp.value || ''; if (v.length === 5) v += ':00'; formState[f.key] = v; };
+    fbox.appendChild(wrap);
+  } else if (f.key === 'ngay') {
+    const p = n => String(n).padStart(2, '0');
+    const t = new Date();
+    const isoLocal = t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate());
+    const toVN = s => { const [y, m, d] = s.split('-'); return d + '/' + m + '/' + y; };
+    formState[f.key] = toVN(isoLocal);
+    const wrap = $(`<div><label>${f.label}</label><input type="date" value="${isoLocal}" /></div>`);
+    const inp = wrap.querySelector('input');
+    inp.onchange = () => { formState[f.key] = inp.value ? toVN(inp.value) : ''; };
+    fbox.appendChild(wrap);
+  } else {
+    formState[f.key] = '';
+    const ph = f.key === 'hoTen' ? 'vd: nguyễn văn a' : '';
+    const wrap = $(`<div><label>${f.label}</label><input type="text" placeholder="${ph}" /></div>`);
+    const inp = wrap.querySelector('input');
+    inp.oninput = () => { formState[f.key] = inp.value.trim(); };
+    fbox.appendChild(wrap);
+  }
+}
+
+// ---- CHẠY NHIỀU LUỒNG (batch) ----
+// Gộp field của các luồng đã chọn, KHÔNG trùng key (Mã BA/Ngày... nhập chung 1 lần).
+function fieldsForFlows(ids) {
+  const seen = new Set(); const out = [];
+  ids.forEach(id => {
+    const w = WF.find(x => x.id === id); if (!w) return;
+    w.fields.forEach(f => { if (!seen.has(f.key)) { seen.add(f.key); out.push(f); } });
+  });
+  return out;
+}
+
+// Màn CHỌN các luồng (bấm theo thứ tự muốn chạy)
+function renderPick() {
+  app.innerHTML = '';
+  app.appendChild($(`<a class="back" onclick="render('home')">← Trang chủ</a>`));
+  const c = $(`<div class="card"><h2>🔀 Chạy nhiều luồng liên tiếp</h2>
+    <div class="muted" style="margin-bottom:12px">Bấm chọn các luồng theo THỨ TỰ muốn chạy. Mã BA / Ngày sẽ nhập chung một lần.</div>
+    <div id="pl"></div>
+    <div style="height:8px"></div>
+    <button class="btn-ok" id="next">Nhập dữ liệu →</button>
+    <div id="err" style="color:var(--err);margin-top:10px;font-size:14px"></div></div>`);
+  app.appendChild(c);
+  const pl = c.querySelector('#pl');
+  WF.forEach(w => {
+    const idx = pickSel.indexOf(w.id);
+    const chip = $(`<div class="vac ${idx >= 0 ? 'on' : ''}" style="text-align:left;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <span>${w.icon} ${w.name}</span>
+      <span style="flex:none;min-width:26px;height:26px;line-height:26px;text-align:center;border-radius:50%;font-size:13px;${idx >= 0 ? 'background:var(--pri);color:#fff' : ''}">${idx >= 0 ? (idx + 1) : ''}</span></div>`);
+    chip.onclick = () => { const i = pickSel.indexOf(w.id); if (i >= 0) pickSel.splice(i, 1); else pickSel.push(w.id); renderPick(); };
+    pl.appendChild(chip);
+  });
+  c.querySelector('#next').onclick = () => {
+    if (!pickSel.length) return c.querySelector('#err').textContent = 'Chọn ít nhất 1 luồng.';
+    render('batchform');
+  };
+}
+
+// Màn NHẬP DỮ LIỆU gộp cho các luồng đã chọn
+function renderBatchForm() {
+  const flows = pickSel.map(id => WF.find(x => x.id === id)).filter(Boolean);
+  formState = {};
+  app.innerHTML = '';
+  app.appendChild($(`<a class="back" onclick="render('pick')">← Chọn luồng</a>`));
+  const ten = flows.map((w, i) => `${i + 1}. ${w.name}`).join(' → ');
+  const c = $(`<div class="card"><h2>📝 Nhập dữ liệu (${flows.length} luồng)</h2>
+    <div class="muted" style="margin-bottom:12px">Sẽ chạy lần lượt: <b>${ten}</b></div>
+    <div id="fields"></div>
+    <button class="btn-ok" id="run">▶ Chạy ${flows.length} luồng</button>
+    <div id="err" style="color:var(--err);margin-top:10px;font-size:14px"></div></div>`);
+  app.appendChild(c);
+  const fbox = c.querySelector('#fields');
+  fieldsForFlows(pickSel).forEach(f => renderField(fbox, f));
+
+  c.querySelector('#run').onclick = async () => {
+    // Kiểm tra bắt buộc theo TỪNG luồng
+    for (const w of flows) for (const f of w.fields) {
+      const v = formState[f.key];
+      if (f.required && (!v || (Array.isArray(v) && !v.length)))
+        return c.querySelector('#err').textContent = `Nhập/chọn: ${f.label} (${w.name})`;
+    }
+    const btn = c.querySelector('#run'); btn.disabled = true; btn.textContent = 'Đang tạo job...';
+    batchIds = [];
+    // Tạo job LẦN LƯỢT theo thứ tự -> id tăng dần -> hàng đợi chạy đúng thứ tự
+    for (const id of pickSel) {
+      const r = await api('/api/jobs', { method: 'POST', body: JSON.stringify({ workflowId: id, data: { ...formState } }) });
+      batchIds.push(r.id);
+    }
+    render('batch');
+  };
+}
+
+// Màn theo dõi các job của batch
+async function renderBatch(mine) {
+  if (!mine) { const jobs = await api('/api/jobs'); mine = batchIds.map(id => jobs.find(j => j.id === id)).filter(Boolean); }
+  app.innerHTML = '';
+  app.appendChild($(`<a class="back" onclick="render('home')">← Trang chủ</a>`));
+  const done = mine.filter(j => ['success', 'failed', 'canceled'].includes(j.status)).length;
+  const c = $(`<div class="card"><h2>🔀 Chạy ${batchIds.length} luồng liên tiếp</h2>
+    <div class="muted" style="margin-bottom:6px">Xong ${done}/${batchIds.length}. Các luồng chạy lần lượt, bấm vào từng job để xem chi tiết.</div>
+    <div id="bl"></div></div>`);
+  app.appendChild(c);
+  const bl = c.querySelector('#bl');
+  mine.forEach((j, i) => {
+    const el = $(`<div class="job"><div><div><b>${i + 1}. #${j.id}</b> ${j.patient_name || ''}</div><div class="muted">${j.current_step || ''}</div></div>${chip(j.status)}</div>`);
+    el.onclick = () => render('job', j.id);
+    bl.appendChild(el);
+  });
 }
 
 // ---- Chi tiết job ----
@@ -260,6 +351,11 @@ async function poll() {
       const data = await api('/api/jobs/' + view.jobId);
       const sig = JSON.stringify([data.job.status, data.job.current_step, data.job.confirm_shot, data.logs.length]);
       if (sig !== pollSig) { pollSig = sig; renderJob(view.jobId, data); }
+    } else if (view.name === 'batch' && batchIds.length) {
+      const jobs = await api('/api/jobs');
+      const mine = batchIds.map(id => jobs.find(j => j.id === id)).filter(Boolean);
+      const sig = JSON.stringify(mine.map(j => [j.id, j.status, j.current_step]));
+      if (sig !== pollSig) { pollSig = sig; renderBatch(mine); }
     }
   } catch {}
 }
