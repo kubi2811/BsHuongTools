@@ -136,7 +136,7 @@ const WORKFLOWS = [
     fields: [
       { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
       { key: 'ngay', label: 'Ngày y lệnh (DD/MM/YYYY)', type: 'text', required: true },
-      { key: 'loaiXN', label: 'Loại XN sàng lọc (chọn 1 hoặc cả 2)', type: 'multiselect', options: ['Thường quy', 'Mở rộng'], default: ['Thường quy', 'Mở rộng'], required: true },
+      { key: 'loaiXN', label: 'Loại XN sàng lọc (chọn 1 hoặc cả 2)', type: 'multiselect', options: ['Thường quy', 'Mở rộng'], required: true },
     ],
   },
 ];
