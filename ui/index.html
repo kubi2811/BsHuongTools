@@ -57,6 +57,7 @@ let WF = [];            // danh sách workflow (từ /api/workflows)
 let formState = {};     // giá trị đang nhập của form hiện tại
 let pickSel = [];       // các luồng đã chọn để chạy batch (theo thứ tự)
 let batchIds = [];      // id các job vừa tạo trong 1 batch
+let batchStates = [];   // dữ liệu RIÊNG của từng luồng trong batch
 
 async function render(name, arg) {
   view = { name, jobId: name==='job' ? arg : view.jobId, wf: name==='form' ? arg : view.wf };
@@ -139,7 +140,7 @@ async function renderForm(wfId) {
     </div>`);
   app.appendChild(c);
   const fbox = c.querySelector('#fields');
-  w.fields.forEach(f => renderField(fbox, f));
+  w.fields.forEach(f => renderField(fbox, f, formState));
   c.querySelector('#run').onclick = async () => {
     for (const f of w.fields) {
       const v = formState[f.key];
@@ -151,17 +152,17 @@ async function renderForm(wfId) {
   };
 }
 
-// Vẽ 1 field (dùng chung cho form 1 luồng và form gộp nhiều luồng). Ghi giá trị vào formState.
-function renderField(fbox, f) {
+// Vẽ 1 field, ghi giá trị vào object `state` truyền vào (mỗi luồng 1 state riêng khi chạy batch).
+function renderField(fbox, f, state) {
   if (f.type === 'multiselect') {
-    formState[f.key] = Array.isArray(f.default) ? [...f.default] : [];
+    state[f.key] = Array.isArray(f.default) ? [...f.default] : [];
     const wrap = $(`<div><label>${f.label}</label><div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"></div></div>`);
     const row = wrap.querySelector('div > div');
     f.options.forEach(opt => {
-      const on = formState[f.key].includes(opt);
+      const on = state[f.key].includes(opt);
       const chip = $(`<div class="vac${on ? ' on' : ''}" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
       chip.onclick = () => {
-        const arr = formState[f.key]; const i = arr.indexOf(opt);
+        const arr = state[f.key]; const i = arr.indexOf(opt);
         if (i >= 0) arr.splice(i, 1); else arr.push(opt);
         chip.classList.toggle('on', arr.includes(opt));
       };
@@ -169,60 +170,54 @@ function renderField(fbox, f) {
     });
     fbox.appendChild(wrap);
   } else if (f.type === 'select') {
-    formState[f.key] = '';
+    state[f.key] = '';
     const wrap = $(`<div><label>${f.label}</label><div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"></div></div>`);
     const row = wrap.querySelector('div > div');
     const chips = [];
     f.options.forEach(opt => {
       const chip = $(`<div class="vac" data-v="${opt}" style="flex:0 1 auto;padding:10px 16px">${opt}</div>`);
-      chip.onclick = () => { formState[f.key] = opt; chips.forEach(c => c.classList.toggle('on', c === chip)); };
+      chip.onclick = () => { state[f.key] = opt; chips.forEach(c => c.classList.toggle('on', c === chip)); };
       chips.push(chip); row.appendChild(chip);
     });
     fbox.appendChild(wrap);
   } else if (f.type === 'time') {
     const def = f.default || '08:00:00';
-    formState[f.key] = def;
+    state[f.key] = def;
     const wrap = $(`<div><label>${f.label}</label><input type="time" step="1" value="${def}" /></div>`);
     const inp = wrap.querySelector('input');
-    inp.onchange = () => { let v = inp.value || ''; if (v.length === 5) v += ':00'; formState[f.key] = v; };
+    inp.onchange = () => { let v = inp.value || ''; if (v.length === 5) v += ':00'; state[f.key] = v; };
     fbox.appendChild(wrap);
   } else if (f.key === 'ngay') {
     const p = n => String(n).padStart(2, '0');
     const t = new Date();
     const isoLocal = t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate());
     const toVN = s => { const [y, m, d] = s.split('-'); return d + '/' + m + '/' + y; };
-    formState[f.key] = toVN(isoLocal);
+    state[f.key] = toVN(isoLocal);
     const wrap = $(`<div><label>${f.label}</label><input type="date" value="${isoLocal}" /></div>`);
     const inp = wrap.querySelector('input');
-    inp.onchange = () => { formState[f.key] = inp.value ? toVN(inp.value) : ''; };
+    inp.onchange = () => { state[f.key] = inp.value ? toVN(inp.value) : ''; };
     fbox.appendChild(wrap);
   } else {
-    formState[f.key] = '';
+    state[f.key] = '';
     const ph = f.key === 'hoTen' ? 'vd: nguyễn văn a' : '';
     const wrap = $(`<div><label>${f.label}</label><input type="text" placeholder="${ph}" /></div>`);
     const inp = wrap.querySelector('input');
-    inp.oninput = () => { formState[f.key] = inp.value.trim(); };
+    inp.oninput = () => { state[f.key] = inp.value.trim(); };
     fbox.appendChild(wrap);
   }
 }
 
 // ---- CHẠY NHIỀU LUỒNG (batch) ----
-// Gộp field của các luồng đã chọn, KHÔNG trùng key (Mã BA/Ngày... nhập chung 1 lần).
-function fieldsForFlows(ids) {
-  const seen = new Set(); const out = [];
-  ids.forEach(id => {
-    const w = WF.find(x => x.id === id); if (!w) return;
-    w.fields.forEach(f => { if (!seen.has(f.key)) { seen.add(f.key); out.push(f); } });
-  });
-  return out;
-}
+// CHỈ trường định danh bệnh nhân (Mã BA / Tên) là DÙNG CHUNG; mọi trường khác (Ngày, giờ,
+// vaccine...) nhập RIÊNG cho từng luồng.
+const KEY_CHUNG = ['maBA', 'hoTen'];
 
 // Màn CHỌN các luồng (bấm theo thứ tự muốn chạy)
 function renderPick() {
   app.innerHTML = '';
   app.appendChild($(`<a class="back" onclick="render('home')">← Trang chủ</a>`));
   const c = $(`<div class="card"><h2>🔀 Chạy nhiều luồng liên tiếp</h2>
-    <div class="muted" style="margin-bottom:12px">Bấm chọn các luồng theo THỨ TỰ muốn chạy. Mã BA / Ngày sẽ nhập chung một lần.</div>
+    <div class="muted" style="margin-bottom:12px">Bấm chọn các luồng theo THỨ TỰ muốn chạy. Chỉ Mã BA / Tên nhập chung; Ngày và các trường khác nhập riêng từng luồng.</div>
     <div id="pl"></div>
     <div style="height:8px"></div>
     <button class="btn-ok" id="next">Nhập dữ liệu →</button>
@@ -243,34 +238,62 @@ function renderPick() {
   };
 }
 
-// Màn NHẬP DỮ LIỆU gộp cho các luồng đã chọn
+// Màn NHẬP DỮ LIỆU: 1 ô định danh bệnh nhân DÙNG CHUNG + mỗi luồng 1 khối field RIÊNG.
 function renderBatchForm() {
   const flows = pickSel.map(id => WF.find(x => x.id === id)).filter(Boolean);
-  formState = {};
+  formState = {};                        // state DÙNG CHUNG (mã BA / tên)
+  batchStates = flows.map(() => ({}));   // state RIÊNG cho mỗi luồng
   app.innerHTML = '';
   app.appendChild($(`<a class="back" onclick="render('pick')">← Chọn luồng</a>`));
   const ten = flows.map((w, i) => `${i + 1}. ${w.name}`).join(' → ');
   const c = $(`<div class="card"><h2>📝 Nhập dữ liệu (${flows.length} luồng)</h2>
     <div class="muted" style="margin-bottom:12px">Sẽ chạy lần lượt: <b>${ten}</b></div>
-    <div id="fields"></div>
+    <div id="shared"></div>
+    <div id="perflow"></div>
     <button class="btn-ok" id="run">▶ Chạy ${flows.length} luồng</button>
     <div id="err" style="color:var(--err);margin-top:10px;font-size:14px"></div></div>`);
   app.appendChild(c);
-  const fbox = c.querySelector('#fields');
-  fieldsForFlows(pickSel).forEach(f => renderField(fbox, f));
+
+  // Phần DÙNG CHUNG: các trường định danh bệnh nhân (dedup theo key)
+  const sBox = c.querySelector('#shared');
+  const seen = new Set(); const sharedFields = [];
+  flows.forEach(w => w.fields.forEach(f => {
+    if (KEY_CHUNG.includes(f.key) && !seen.has(f.key)) { seen.add(f.key); sharedFields.push(f); }
+  }));
+  if (sharedFields.length) {
+    sBox.appendChild($(`<div style="font-weight:700;margin:4px 0 6px">🧑 Bệnh nhân (dùng chung)</div>`));
+    sharedFields.forEach(f => renderField(sBox, f, formState));
+  }
+
+  // Mỗi luồng 1 khối field RIÊNG (bỏ trường dùng chung)
+  const pBox = c.querySelector('#perflow');
+  flows.forEach((w, i) => {
+    const sec = $(`<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin:12px 0">
+      <div style="font-weight:700;margin-bottom:6px">${i + 1}. ${w.icon} ${w.name}</div><div class="ff"></div></div>`);
+    const box = sec.querySelector('.ff');
+    const own = w.fields.filter(f => !KEY_CHUNG.includes(f.key));
+    if (!own.length) box.innerHTML = '<div class="muted">(không cần nhập thêm)</div>';
+    own.forEach(f => renderField(box, f, batchStates[i]));
+    pBox.appendChild(sec);
+  });
 
   c.querySelector('#run').onclick = async () => {
-    // Kiểm tra bắt buộc theo TỪNG luồng
-    for (const w of flows) for (const f of w.fields) {
-      const v = formState[f.key];
-      if (f.required && (!v || (Array.isArray(v) && !v.length)))
-        return c.querySelector('#err').textContent = `Nhập/chọn: ${f.label} (${w.name})`;
+    // Kiểm tra bắt buộc: trường chung lấy ở formState, trường riêng lấy ở batchStates[i]
+    for (let i = 0; i < flows.length; i++) {
+      const w = flows[i];
+      for (const f of w.fields) {
+        const st = KEY_CHUNG.includes(f.key) ? formState : batchStates[i];
+        const v = st[f.key];
+        if (f.required && (!v || (Array.isArray(v) && !v.length)))
+          return c.querySelector('#err').textContent = `Nhập/chọn: ${f.label} (${w.name})`;
+      }
     }
     const btn = c.querySelector('#run'); btn.disabled = true; btn.textContent = 'Đang tạo job...';
     batchIds = [];
     // Tạo job LẦN LƯỢT theo thứ tự -> id tăng dần -> hàng đợi chạy đúng thứ tự
-    for (const id of pickSel) {
-      const r = await api('/api/jobs', { method: 'POST', body: JSON.stringify({ workflowId: id, data: { ...formState } }) });
+    for (let i = 0; i < flows.length; i++) {
+      const data = { ...formState, ...batchStates[i] }; // chung + riêng
+      const r = await api('/api/jobs', { method: 'POST', body: JSON.stringify({ workflowId: flows[i].id, data }) });
       batchIds.push(r.id);
     }
     render('batch');
