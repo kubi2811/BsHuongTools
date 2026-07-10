@@ -13,6 +13,7 @@ import { chayLuong1, chayLuongKhamChuyenKhoa, VACCINE_MAC_DINH, type Vaccine } f
 import { chayLuong4, COMBO_CHON } from '../src/luong4.js';
 import { chayLuong5 } from '../src/luong5.js';
 import { chayLuong6 } from '../src/luong6.js';
+import { chayLuong7, VACCINE_L7, type VaccineL7 } from '../src/luong7.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -130,6 +131,18 @@ const WORKFLOWS = [
       { key: 'loaiXN', label: 'Loại XN sàng lọc (chọn 1 hoặc cả 2)', type: 'multiselect', options: ['Thường quy', 'Mở rộng'], default: ['Thường quy', 'Mở rộng'], required: true },
     ],
   },
+  {
+    id: 'kham-be',
+    name: 'Khám bé (Luồng 7)',
+    icon: '🍼',
+    patientNameField: 'maBA',
+    fields: [
+      { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
+      { key: 'ngay', label: 'Ngày y lệnh', type: 'text', required: true },
+      { key: 'gio', label: 'Giờ y lệnh', type: 'time', default: '08:00:00', required: true },
+      { key: 'vaccines', label: 'Vaccine (tự chọn)', type: 'multiselect', options: ['BCG', 'VGB'], required: true },
+    ],
+  },
 ];
 
 // ---------- Quản lý browser (1 context bền vững, dùng lại) ----------
@@ -221,6 +234,10 @@ async function processQueue(): Promise<void> {
       const mapXN: Record<string, string> = { 'Thường quy': 'XN000530', 'Mở rộng': 'XN000536' };
       const codes = (data.loaiXN || []).map((x: string) => mapXN[x]).filter(Boolean);
       await chayLuong6(page, { maBA: data.maBA, ngay: data.ngay, codes }, onConfirm);
+    } else if (row.workflow_id === 'kham-be') {
+      // Luồng 7: khám bé + tiêm chủng trên hồ sơ con. KHÔNG có điểm xác nhận (chạy tự động hết).
+      const vaccines: VaccineL7[] = (data.vaccines || []).map((v: string) => VACCINE_L7[v]).filter(Boolean);
+      await chayLuong7(page, { maBA: data.maBA, ngay: data.ngay, gio: data.gio, vaccines });
     } else {
       throw new Error('Workflow chưa hỗ trợ: ' + row.workflow_id);
     }

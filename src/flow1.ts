@@ -2,7 +2,7 @@
 // Chạy headed để bác sĩ theo dõi. Mỗi giai đoạn xong sẽ dò DOM trang kế tiếp.
 import { type Page } from 'playwright';
 import { config } from './config.js';
-import { step, chupManHinh, checkpoint, nhapSach, xacNhanPopupNeuCo } from './helpers.js';
+import { step, chupManHinh, checkpoint, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
 import { dangNhapLaiNeuCan, dongThongBao } from './login.js';
 import path from 'node:path';
 
@@ -220,6 +220,8 @@ export async function luuToDieuTri(page: Page): Promise<void> {
     await page.waitForTimeout(1500);
     // Nếu đã có tờ điều trị cùng ngày -> HIS hỏi "Xác nhận tạo trùng" -> bấm Xác nhận (theo yêu cầu)
     await xacNhanPopupNeuCo(page);
+    // Cảnh báo mềm chỉ có nút Đóng (vd "thời gian y lệnh > thời gian vào khoa") -> đóng để không chặn bước sau
+    await dongCanhBaoNeuCo(page);
     await page.waitForTimeout(800);
   });
 }

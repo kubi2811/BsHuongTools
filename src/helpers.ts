@@ -38,6 +38,19 @@ export async function xacNhanPopupNeuCo(page: Page, timeoutMs = 2500): Promise<b
   return false;
 }
 
+// Đóng popup cảnh báo chỉ có nút Đóng/Bỏ qua (vd "Người bệnh cần tạm ứng...") để không chặn nút Lưu.
+export async function dongCanhBaoNeuCo(page: Page): Promise<boolean> {
+  const warn = page.getByRole('dialog').filter({ hasText: /tạm ứng|Cảnh báo|Thông báo/i }).first();
+  if (!(await warn.isVisible().catch(() => false))) return false;
+  const btn = warn.getByRole('button', { name: /^\s*(Đóng|Bỏ qua|OK)\s*$/i }).first();
+  if (await btn.count()) {
+    await btn.click();
+    await page.waitForTimeout(800);
+    return true;
+  }
+  return false;
+}
+
 // Hook báo tiến độ để server ghi log + hiển thị lên UI (đặt bởi executor)
 export type StepReport = { name: string; screenshot: string; level: 'info' | 'error'; durationMs: number; error?: string };
 let reporter: ((r: StepReport) => void) | null = null;

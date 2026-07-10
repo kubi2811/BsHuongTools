@@ -161,6 +161,18 @@ async function renderForm(wfId) {
         chips.push(chip); row.appendChild(chip);
       });
       fbox.appendChild(wrap);
+    } else if (f.type === 'time') {
+      // Giờ y lệnh: chọn giờ (HH:MM:SS). Native picker trả HH:MM -> tự thêm :00.
+      const def = f.default || '08:00:00';
+      formState[f.key] = def;
+      const wrap = $(`<div><label>${f.label}</label><input type="time" step="1" value="${def}" /></div>`);
+      const inp = wrap.querySelector('input');
+      inp.onchange = () => {
+        let v = inp.value || '';
+        if (v.length === 5) v += ':00'; // HH:MM -> HH:MM:SS
+        formState[f.key] = v;
+      };
+      fbox.appendChild(wrap);
     } else if (f.key === 'ngay') {
       // Ngày y lệnh: chọn trên lịch (mặc định HÔM NAY). Lưu dạng DD/MM/YYYY; giờ mặc định 09:00:00 do bot điền.
       const p = n => String(n).padStart(2, '0');

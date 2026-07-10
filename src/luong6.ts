@@ -3,7 +3,7 @@
 // -> hướng xử trí "Xét nghiệm sàng lọc" -> Lưu -> F2 chỉ định XN (XN000530 [+XN000536]).
 import { type Page } from 'playwright';
 import { config } from './config.js';
-import { step, checkpoint, chupManHinh, nhapSach, xacNhanPopupNeuCo } from './helpers.js';
+import { step, checkpoint, chupManHinh, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
 import {
   resetBoLocTimKiem, chonKhoaLamViec, moToDieuTri,
   setTextarea, pickAntSelect, luuToDieuTri, moTrangHIS,
@@ -13,9 +13,12 @@ import {
 //      Chỉ cần gõ "DD/MM/YYYY HH:mm:ss" - ngày do user chọn, giờ mặc định 09:00:00. ----
 export async function setNgayGioLich(page: Page, nhan: string, ngay: string, gio = '09:00:00'): Promise<void> {
   const full = `${ngay} ${gio}`;
-  const wrap = page.getByText(nhan, { exact: false }).first()
-    .locator('xpath=ancestor::div[contains(@class,"date")][1]');
-  const input = wrap.locator('input.input-date').first();
+  const lbl = page.getByText(nhan, { exact: false }).first();
+  // Ưu tiên ô .input-date trong khối .date của nhãn; fallback: ô .input-date đầu tiên SAU nhãn.
+  let input = lbl.locator('xpath=ancestor::div[contains(@class,"date")][1]').locator('input.input-date').first();
+  if (!(await input.count())) {
+    input = lbl.locator('xpath=following::input[contains(@class,"input-date")][1]');
+  }
   await input.scrollIntoViewIfNeeded();
   for (let lan = 0; lan < 3; lan++) {
     await input.click();
@@ -35,7 +38,12 @@ export async function setNgayGioLich(page: Page, nhan: string, ngay: string, gio
 export async function timVaMoConTheoMaBA(page: Page, maBA: string): Promise<void> {
   const listUrl = config.hisUrl.replace(/\/$/, '') + '/quan-ly-noi-tru/danh-sach-nguoi-benh-noi-tru';
 
-  await step(page, `Tìm MẸ theo Mã BA = ${maBA}`, async () => {
+  // Mã BA của CON = mã mẹ + ".x.y" (vd mẹ "NNNNNNN" -> con "NNNNNNN.3.1"). Mẹ KHÔNG có phần ".x".
+  const conMaRe = new RegExp(maBA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.\\d');
+
+  // Gộp tìm + mở con vào 1 step: mỗi lần retry tự điều hướng lại từ trang danh sách
+  // (nếu tách 2 step, retry của step sau sẽ chạy khi đã rời trang danh sách -> timeout khó hiểu).
+  await step(page, `Tìm MẸ theo Mã BA ${maBA} & mở hồ sơ CON`, async () => {
     await moTrangHIS(page, listUrl); // tự đăng nhập lại nếu hết phiên
     await page.waitForTimeout(1000);
     await chonKhoaLamViec(page);
@@ -45,22 +53,23 @@ export async function timVaMoConTheoMaBA(page: Page, maBA: string): Promise<void
     await page.waitForTimeout(300);
     await s.press('Enter');
     await page.waitForTimeout(2500);
-    // Chờ dòng kết quả (có "Con:" = ca mẹ+con)
-    await page.locator('tr.ant-table-row').first().waitFor({ state: 'visible', timeout: 15000 });
-  }, { retries: 3 });
 
-  await step(page, 'Mở hồ sơ CON (hover tên mẹ -> popup -> icon mở con)', async () => {
-    const row = page.locator('tr.ant-table-row').first();
+    // Chờ ĐÚNG dòng có liên kết CON (chứng tỏ bảng đã lọc xong, không phải kết quả cũ)
+    const conNames = page.locator('tr.ant-table-row .con-name');
+    await conNames.first().waitFor({ state: 'visible', timeout: 15000 });
+    const soCon = await conNames.count();
+    if (soCon > 1) {
+      throw new Error(`Kết quả có ${soCon} bé (sinh đôi hoặc lọc chưa đúng) - KHÔNG tự đoán, dừng an toàn.`);
+    }
+
     // Hover TÊN CON (span.con-name) để hiện popover thông tin con (có icon mở hồ sơ).
-    const conName = row.locator('.con-name').first();
-    const hoverTarget = (await conName.count()) ? conName : row.locator('.con-item, .tenNb').first();
-    await hoverTarget.scrollIntoViewIfNeeded();
-    // Popover thông tin con (lọc theo nội dung để tránh trúng popover khác đang ẩn)
+    const conName = conNames.first();
+    await conName.scrollIntoViewIfNeeded();
     const popContent = page.locator('.ant-popover-inner-content')
       .filter({ hasText: /Tên người bệnh|Mã NB|Chẩn đoán/i }).last();
     let popped = false;
     for (let i = 0; i < 4; i++) {
-      await hoverTarget.hover({ force: true });
+      await conName.hover({ force: true });
       await page.waitForTimeout(600);
       if (await popContent.count()) { popped = true; break; }
     }
@@ -76,18 +85,16 @@ export async function timVaMoConTheoMaBA(page: Page, maBA: string): Promise<void
     await page.waitForURL(/chi-tiet-nguoi-benh-noi-tru\/\d+/, { timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(1500);
 
-    // VERIFY đúng CON: mã BA con dạng <maBA>.1.x HOẶC hồ sơ sơ sinh ("ngày tuổi").
-    const conMaRe = new RegExp(maBA.replace(/\./g, '\\.') + '\\.1');
+    // VERIFY đúng CON: hồ sơ phải mang mã <maBA>.x.y (mẹ chỉ có <maBA>).
     let dungCon = false;
     try {
-      await page.getByText(new RegExp(conMaRe.source + '|ngày tuổi', 'i')).first()
-        .waitFor({ state: 'attached', timeout: 10000 });
+      await page.getByText(conMaRe).first().waitFor({ state: 'attached', timeout: 10000 });
       dungCon = true;
     } catch {
       dungCon = conMaRe.test(await page.content().catch(() => ''));
     }
-    if (!dungCon) throw new Error(`Mở NHẦM hồ sơ - không thấy mã con ${maBA}.1 / "ngày tuổi". URL=${page.url()}`);
-  }, { retries: 2 });
+    if (!dungCon) throw new Error(`Mở NHẦM hồ sơ - không thấy mã con dạng ${maBA}.x.y. URL=${page.url()}`);
+  }, { retries: 3 });
 }
 
 // ---- Chẩn đoán bệnh (ant-select searchable): gõ mã -> chọn option ----
@@ -178,17 +185,8 @@ export async function chiDinhXetNghiem(page: Page, codes: string[]): Promise<voi
   });
 
   await step(page, 'Đóng cảnh báo tạm ứng (nếu có)', async () => {
-    await dongCanhBaoTamUng(page);
+    await dongCanhBaoNeuCo(page);
   });
-}
-
-// Đóng popup "Cảnh báo - Người bệnh cần tạm ứng..." (nút Đóng/Bỏ qua) để không chặn nút Lưu.
-async function dongCanhBaoTamUng(page: Page): Promise<void> {
-  const warn = page.getByRole('dialog').filter({ hasText: /tạm ứng|Cảnh báo/i });
-  if (await warn.isVisible().catch(() => false)) {
-    await warn.getByRole('button', { name: /Đóng|Bỏ qua|^OK$/i }).first().click();
-    await page.waitForTimeout(800);
-  }
 }
 
 // Bấm Lưu CUỐI của luồng (lưu chỉ định xét nghiệm)
