@@ -118,10 +118,10 @@ export async function moTabDonThuocRaVien(page: Page): Promise<void> {
 
 // ---- Các bước thao tác trên form đơn thuốc ra viện ----
 
-// Kiểm tra "đã có đơn -> dừng" (theo note) rồi tạo tờ nếu chưa có.
-// Chờ đúng trạng thái (nút Tạo HOẶC form đã mở) rồi mới quyết -> tránh race báo nhầm "đã có".
+// Vào đơn thuốc ra viện: nếu ĐÃ CÓ đơn cũ -> Xóa (đơn cũ có thể nhập sai) -> Đồng ý -> tạo lại.
+// Chờ đúng trạng thái (nút Tạo HOẶC form đã mở) rồi mới quyết -> tránh race.
 export async function taoToDonThuoc(page: Page): Promise<void> {
-  await step(page, 'Kiểm tra & Tạo tờ điều trị đơn thuốc ra viện', async () => {
+  await step(page, 'Vào đơn thuốc (xóa đơn cũ nếu có) & tạo tờ mới', async () => {
     const taoBtn = page.getByRole('button', { name: /Tạo tờ điều trị đơn thuốc ra viện/i }).first();
     const formField = page.getByPlaceholder(/Chọn thuốc/i).first();
     // Chờ 1 trong 2: nút Tạo (chưa có đơn) HOẶC ô Chọn thuốc (đã có đơn/form đang mở)
@@ -130,14 +130,29 @@ export async function taoToDonThuoc(page: Page): Promise<void> {
       formField.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}),
     ]);
     await page.waitForTimeout(500);
+
+    // ĐÃ CÓ đơn (form hiện, chưa có nút Tạo) -> XÓA đơn cũ rồi tạo lại.
+    if (!(await taoBtn.isVisible().catch(() => false)) && (await formField.isVisible().catch(() => false))) {
+      await step(page, 'Xóa đơn thuốc ra viện cũ', async () => {
+        const xoaBtn = page.getByRole('button', { name: /^\s*Xóa\s*$/i }).first();
+        await xoaBtn.waitFor({ state: 'visible', timeout: 10000 });
+        await xoaBtn.click();
+        // Popup "Xoá dữ liệu - Bạn có chắc chắn muốn xóa Đơn thuốc ra viện?" -> Đồng ý
+        const dlg = page.getByRole('dialog').filter({ hasText: /Đơn thuốc ra viện|Xoá dữ liệu/i }).first();
+        await dlg.waitFor({ state: 'visible', timeout: 10000 });
+        await dlg.getByRole('button', { name: /Đồng ý/i }).first().click();
+        await page.waitForTimeout(2500);
+        await xacNhanPopupNeuCo(page, 800);
+        // Sau khi xóa -> nút "Tạo tờ điều trị đơn thuốc ra viện" xuất hiện lại
+        await taoBtn.waitFor({ state: 'visible', timeout: 15000 });
+      });
+    }
+
+    // Chưa có đơn (hoặc vừa xóa xong) -> bấm Tạo.
     if (await taoBtn.isVisible().catch(() => false)) {
-      await taoBtn.click(); // chưa có đơn -> tạo mới
+      await taoBtn.click();
       await formField.waitFor({ state: 'visible', timeout: 15000 });
-    } else if (await formField.isVisible().catch(() => false)) {
-      // Form đã hiện sẵn = tờ đã tồn tại. Mặc định DỪNG (tránh kê trùng), trừ khi ép tiếp (test tờ nháp).
-      if (process.env.L4_FORCE === '1') return; // ép tiếp: dùng lại tờ nháp trống để test
-      throw new Error('ĐÃ CÓ đơn thuốc ra viện cho bệnh nhân này -> dừng luồng (theo note).');
-    } else {
+    } else if (!(await formField.isVisible().catch(() => false))) {
       throw new Error('Không xác định được trạng thái màn Đơn thuốc ra viện (web chưa load?).');
     }
   });
