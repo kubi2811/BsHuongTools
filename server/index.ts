@@ -11,7 +11,7 @@ import { ensureLoggedIn } from '../src/login.js';
 import { setStepReporter } from '../src/helpers.js';
 import { chayLuongKhamChuyenKhoa } from '../src/flow1.js';
 import { chayLuong2 } from '../src/luong2.js';
-import { chayLuong4, COMBO_CHON } from '../src/luong4.js';
+import { chayLuong4, TOA_NAMES } from '../src/luong4.js';
 import { chayLuong5 } from '../src/luong5.js';
 import { chayLuong6 } from '../src/luong6.js';
 import { chayLuong7, VACCINE_L7, type VaccineL7 } from '../src/luong7.js';
@@ -114,8 +114,8 @@ const WORKFLOWS = [
     patientNameField: 'maBA',
     fields: [
       { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
-      { key: 'ngay', label: 'Ngày y lệnh (DD/MM/YYYY)', type: 'text', required: true },
-      { key: 'combos', label: 'Combo thuốc (chọn nhiều được)', type: 'multiselect', options: Object.keys(COMBO_CHON), required: true },
+      { key: 'ngay', label: 'Ngày y lệnh', type: 'text', required: true },
+      { key: 'toa', label: 'Toa (bộ chỉ định - chọn nhiều được)', type: 'multiselect', options: TOA_NAMES, required: true },
     ],
   },
   {
@@ -223,7 +223,7 @@ async function processQueue(): Promise<void> {
       await chayLuongKhamChuyenKhoa(page, { tenBenhNhan, ngay: data.ngay, gio: '08:02:00', huongXuTri: 'Khám phục hồi chức năng', maKhoa: '4074', noiDung: '' }, onConfirm);
     } else if (row.workflow_id === 'don-thuoc-ra-vien') {
       // Luồng 4 tìm theo Mã BA + KHÔNG có điểm xác nhận (note: cứ Lưu hoàn thành)
-      await chayLuong4(page, { maBA: data.maBA, ngay: data.ngay, combos: data.combos });
+      await chayLuong4(page, { maBA: data.maBA, ngay: data.ngay, toa: data.toa });
     } else if (row.workflow_id === 'nhap-thuoc') {
       // Luồng 5: tạo tờ điều trị mẹ theo cách thức đẻ, dừng ở điểm xác nhận trước Lưu
       await chayLuong5(page, { maBA: data.maBA, ngay: data.ngay }, onConfirm);

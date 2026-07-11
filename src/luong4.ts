@@ -1,9 +1,41 @@
-// LUỒNG 4: Đánh toa xuất viện (kê đơn thuốc ra viện).
-// Dữ liệu combo/thuốc mã hóa theo note (mã thuốc, số lượng, liều, cách dùng).
+// LUỒNG 4: Đánh toa xuất viện (kê đơn thuốc ra viện) - cơ chế "bộ chỉ định" (toa có sẵn).
+// Chọn toa (Toa enpovid/orenko/curam/next MH) -> HIS tự nạp thuốc -> chỉ chỉnh "Số ngày".
 import { type Page } from 'playwright';
-import { step, checkpoint, nhapSach } from './helpers.js';
+import { step, checkpoint, nhapSach, dongCanhBaoNeuCo, xacNhanPopupNeuCo } from './helpers.js';
 import { chonKhoaLamViec, setNgayGio, moTrangHIS, resetBoLocTimKiem } from './flow1.js';
+import { docCotBang, dienOTheoCot } from './luong7.js';
 import { config } from './config.js';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Chọn ngày trên ô antd DatePicker readonly (vd "Từ ngày", placeholder "Chọn thời điểm").
+// QUAN TRỌNG: các date-picker đã đóng vẫn để lại dropdown ẨN trong DOM -> phải giới hạn thao
+// tác vào dropdown ĐANG MỞ (:not(.ant-picker-dropdown-hidden)), nếu không .first() trúng ô ẩn.
+async function chonNgayAntd(page: Page, nhan: string, ngay: string): Promise<void> {
+  const [dd, mm, yyyy] = ngay.split('/').map((s) => s.trim());
+  const iso = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+  const picker = page.getByText(nhan, { exact: false }).first()
+    .locator('xpath=following::div[contains(@class,"ant-picker")][1]');
+  await picker.scrollIntoViewIfNeeded();
+  await picker.click();
+  const dd_ = page.locator('.ant-picker-dropdown:not(.ant-picker-dropdown-hidden)').last();
+  await dd_.locator('.ant-picker-cell-in-view').first().waitFor({ state: 'visible', timeout: 8000 });
+  for (let i = 0; i < 60; i++) {
+    const head = (await dd_.locator('.ant-picker-header-view').first().textContent().catch(() => '')) || '';
+    const my = /([A-Za-z]{3,})\D*(\d{4})/.exec(head);
+    if (!my) break;
+    const curM = MONTHS.findIndex((x) => my[1].startsWith(x));
+    const curY = Number(my[2]);
+    if (curM === Number(mm) - 1 && curY === Number(yyyy)) break;
+    const back = curY > Number(yyyy) || (curY === Number(yyyy) && curM > Number(mm) - 1);
+    await dd_.locator(back ? '.ant-picker-header-prev-btn' : '.ant-picker-header-next-btn').first().click();
+    await page.waitForTimeout(250);
+  }
+  await dd_.locator(`.ant-picker-cell-in-view[title="${iso}"]`).first().click();
+  await page.waitForTimeout(400);
+  const got = (await picker.locator('input').first().inputValue().catch(() => '')) || '';
+  if (!got.includes(ngay)) console.warn(`  ⚠️  "${nhan}" hiển thị "${got}" chưa khớp ${ngay}.`);
+}
 
 // Mở bệnh nhân theo MÃ BỆNH ÁN (duy nhất). CÓ VERIFY đúng BN (an toàn - không thao tác nhầm).
 // SPA hay kẹt kết quả tìm kiếm cũ -> phải Hủy tìm kiếm reset, gõ chắc, và verify lại.
@@ -44,39 +76,34 @@ export async function moBenhNhanTheoMaBA(page: Page, maBA: string): Promise<void
   }, { retries: 3 });
 }
 
-export interface ThuocRaVien {
-  ma: string;             // mã thuốc để gõ tìm (vd 03EN0095)
-  ten: string;            // tên hiển thị để nhận dòng "Đã chọn"
-  nguon: 'kho' | 'nha-thuoc'; // Thuốc kho / Thuốc nhà thuốc
-  slSang?: string;        // Sl sáng
-  slToi?: string;         // Sl tối
-  soLuong: string;        // Số lượng
-  cachDungThem?: string;  // nối thêm vào SAU text cách dùng có sẵn (vd "khi đói")
-  cachDung?: string;      // ghi đè cách dùng (vd "Rửa ngoài âm hộ")
+// 1 "bộ chỉ định" (toa có sẵn trong HIS). Chọn toa -> HIS tự nạp thuốc; ta chỉ chỉnh "Số ngày".
+export interface Toa {
+  boChiDinh: RegExp;                       // text option trong dropdown "Chọn bộ chỉ định"
+  nguon: 'kho' | 'nha-thuoc';              // toa nằm ở nguồn Kho hay Nhà thuốc
+  soNgay: { match: RegExp; ngay: string }[]; // chỉnh "Số ngày" của thuốc khớp `match`
 }
 
-// Bảng thuốc (theo RULE trong note)
-export const THUOC: Record<string, ThuocRaVien> = {
-  enpovid:   { ma: '03EN0095', ten: 'enpovid',    nguon: 'kho',       slSang: '1', slToi: '1', soLuong: '10', cachDungThem: 'khi đói' },
-  phytogyno: { ma: '06PH0001', ten: 'phytogyno',  nguon: 'kho',       soLuong: '1', cachDung: 'Rửa ngoài âm hộ' },
-  orenko:    { ma: '08OR0001', ten: 'orenko',     nguon: 'kho',       slSang: '1', slToi: '1', soLuong: '10' },
-  curam:     { ma: '08CU0046', ten: 'curam',      nguon: 'kho',       slSang: '1', slToi: '1', soLuong: '10' },
-  nextgcal:  { ma: 'THNEX001', ten: 'Next Gcal',  nguon: 'nha-thuoc', slSang: '2', soLuong: '60' },
-  felnosat:  { ma: 'THFEL001', ten: 'Felnosat',   nguon: 'nha-thuoc', slSang: '1', slToi: '1', soLuong: '60', cachDungThem: 'khi đói' },
-  gema04:    { ma: 'THGEM003', ten: 'Gemapaxane', nguon: 'nha-thuoc', soLuong: '6' }, // gemapaxane 0.4ml
-  gema06:    { ma: 'THGEM002', ten: 'Gemapaxane', nguon: 'nha-thuoc', soLuong: '6' }, // gemapaxane 0.6ml
+// Tên hiển thị (chip UI) -> định nghĩa toa. (option thật trong HIS đều chữ thường "toa ... MH")
+export const TOA: Record<string, Toa> = {
+  'Enpovid': {
+    boChiDinh: /toa enpovid MH/i, nguon: 'kho',
+    soNgay: [{ match: /enpovid/i, ngay: '5' }, { match: /phytogyno|vệ sinh/i, ngay: '1' }],
+  },
+  'Orenko': {
+    boChiDinh: /toa orenko MH/i, nguon: 'kho',
+    soNgay: [{ match: /orenko/i, ngay: '5' }, { match: /enpovid/i, ngay: '5' }, { match: /phytogyno|vệ sinh/i, ngay: '1' }],
+  },
+  'Curam': {
+    boChiDinh: /toa curam MH/i, nguon: 'kho',
+    soNgay: [{ match: /curam/i, ngay: '5' }, { match: /enpovid/i, ngay: '5' }, { match: /phytogyno|vệ sinh/i, ngay: '1' }],
+  },
+  'Next': {
+    boChiDinh: /toa next MH/i, nguon: 'nha-thuoc',
+    soNgay: [{ match: /next.*cal|g\s*cal/i, ngay: '30' }, { match: /felnosat/i, ngay: '30' }],
+  },
 };
 
-// Các combo user có thể chọn (nhiều combo cùng lúc). Combo 5 tách 2 option theo loại gema.
-// Key = tên hiển thị trên UI (chip), value = danh sách key thuốc.
-export const COMBO_CHON: Record<string, string[]> = {
-  'Bổ Enpovid':        ['enpovid', 'phytogyno'],
-  'Orenko':            ['orenko', 'enpovid', 'phytogyno'],
-  'Curam':             ['curam', 'enpovid', 'phytogyno'],
-  'Next':              ['nextgcal', 'felnosat'],
-  'Next + Gema 0.4':   ['nextgcal', 'felnosat', 'gema04'],
-  'Next + Gema 0.6':   ['nextgcal', 'felnosat', 'gema06'],
-};
+export const TOA_NAMES = Object.keys(TOA); // cho UI (multiselect)
 
 // Mở tab "Đơn thuốc ra viện" (tab=9) của hồ sơ đang mở, bằng URL cho chắc chắn.
 export async function moTabDonThuocRaVien(page: Page): Promise<void> {
@@ -87,15 +114,6 @@ export async function moTabDonThuocRaVien(page: Page): Promise<void> {
     // Chờ khu vực đơn thuốc load (nút Tạo hoặc thông báo "Chưa tạo")
     await page.getByText(/đơn thuốc ra viện/i).first().waitFor({ state: 'visible', timeout: 15000 });
   }, { retries: 2 });
-}
-
-// Từ các combo user chọn -> danh sách thuốc (dedupe theo key thuốc).
-export function buildDanhSachThuoc(comboNames: string[]): ThuocRaVien[] {
-  const keys: string[] = [];
-  for (const name of comboNames) {
-    for (const k of (COMBO_CHON[name] || [])) if (!keys.includes(k)) keys.push(k);
-  }
-  return keys.map((k) => THUOC[k]).filter(Boolean);
 }
 
 // ---- Các bước thao tác trên form đơn thuốc ra viện ----
@@ -116,7 +134,8 @@ export async function taoToDonThuoc(page: Page): Promise<void> {
       await taoBtn.click(); // chưa có đơn -> tạo mới
       await formField.waitFor({ state: 'visible', timeout: 15000 });
     } else if (await formField.isVisible().catch(() => false)) {
-      // Đã có đơn thuốc (form hiện sẵn) -> DỪNG (theo note, tránh kê trùng)
+      // Form đã hiện sẵn = tờ đã tồn tại. Mặc định DỪNG (tránh kê trùng), trừ khi ép tiếp (test tờ nháp).
+      if (process.env.L4_FORCE === '1') return; // ép tiếp: dùng lại tờ nháp trống để test
       throw new Error('ĐÃ CÓ đơn thuốc ra viện cho bệnh nhân này -> dừng luồng (theo note).');
     } else {
       throw new Error('Không xác định được trạng thái màn Đơn thuốc ra viện (web chưa load?).');
@@ -124,10 +143,36 @@ export async function taoToDonThuoc(page: Page): Promise<void> {
   });
 }
 
-// Set Ngày y lệnh = ngay + 17:00:00 (theo note luồng 4)
+// Set Ngày y lệnh = ngay + 12:00:00 (giờ auto 12h)
 export async function setNgayYLenhDonThuoc(page: Page, ngay: string): Promise<void> {
-  await step(page, `Ngày y lệnh = ${ngay} 17:00:00`, async () => {
-    await setNgayGio(page, 'Ngày y lệnh', `${ngay} 17:00:00`);
+  await step(page, `Ngày y lệnh = ${ngay} 12:00:00`, async () => {
+    await setNgayGio(page, 'Ngày y lệnh', `${ngay} 12:00:00`);
+  });
+}
+
+// Cộng thêm 1 ngày cho chuỗi "DD/MM/YYYY".
+function cong1Ngay(ngay: string): string {
+  const [d, m, y] = ngay.split('/').map((s) => Number(s.trim()));
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + 1);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(dt.getDate())}/${p(dt.getMonth() + 1)}/${dt.getFullYear()}`;
+}
+
+// "Số ngày cho đơn" = 5 (ô textarea số) và "Từ ngày" = Ngày y lệnh + 1 (ô chọn ngày - lịch antd).
+export async function setSoNgayVaTuNgay(page: Page, ngay: string): Promise<void> {
+  await step(page, 'Số ngày cho đơn = 5', async () => {
+    const ta = page.getByText(/Số ngày cho đơn/i).first().locator('xpath=following::textarea[1]');
+    await ta.click();
+    await ta.press('Control+a');
+    await ta.press('Delete');
+    await ta.pressSequentially('5', { delay: 40 });
+    await ta.press('Tab');
+    await page.waitForTimeout(300);
+  });
+  const tuNgay = cong1Ngay(ngay);
+  await step(page, `Từ ngày = ${tuNgay} (Ngày y lệnh + 1)`, async () => {
+    await chonNgayAntd(page, 'Từ ngày', tuNgay);
   });
 }
 
@@ -142,8 +187,8 @@ async function doiNguon(page: Page, dialog: ReturnType<Page['getByRole']>, nhaTh
   await page.waitForTimeout(1500);
 }
 
-// Chọn & điền tất cả thuốc trong hộp thoại "Chỉ định thuốc" rồi Đồng ý.
-export async function chonThuoc(page: Page, thuocList: ThuocRaVien[]): Promise<void> {
+// Chọn các "bộ chỉ định" (toa) trong hộp thoại "Chỉ định thuốc" rồi chỉnh Số ngày, Đồng ý.
+export async function chonBoChiDinh(page: Page, toaKeys: string[]): Promise<void> {
   await step(page, 'Mở hộp thoại chọn thuốc [F2]', async () => {
     await page.getByPlaceholder(/Chọn thuốc/i).first().click();
     await page.getByRole('dialog').filter({ hasText: /Chỉ định thuốc/i }).waitFor({ state: 'visible', timeout: 15000 });
@@ -152,91 +197,61 @@ export async function chonThuoc(page: Page, thuocList: ThuocRaVien[]): Promise<v
 
   const dialog = page.getByRole('dialog').filter({ hasText: /Chỉ định thuốc/i });
 
-  // Nhóm theo nguồn: kho trước (section 0, mặc định), rồi nhà thuốc (thêm section 1)
-  const sapXep = [...thuocList].sort((a, b) => (a.nguon === 'kho' ? 0 : 1) - (b.nguon === 'kho' ? 0 : 1));
-  let daThemNhaThuoc = false;
+  // Toa KHO trước, rồi toa NHÀ THUỐC (đổi nguồn 1 lần).
+  const toas = toaKeys.map((k) => ({ key: k, def: TOA[k] })).filter((t) => t.def);
+  const sapXep = [...toas].sort((a, b) => (a.def!.nguon === 'kho' ? 0 : 1) - (b.def!.nguon === 'kho' ? 0 : 1));
+  let daDoiNhaThuoc = false;
 
-  for (const t of sapXep) {
-    // Section kho = ô tìm thứ 0; section nhà thuốc = ô tìm thứ 1 (sau khi thêm)
-    const sectionIdx = t.nguon === 'kho' ? 0 : 1;
-    if (t.nguon === 'nha-thuoc' && !daThemNhaThuoc) {
-      await step(page, 'Thêm nguồn "Thuốc nhà thuốc"', async () => {
+  for (const { key, def } of sapXep) {
+    if (def!.nguon === 'nha-thuoc' && !daDoiNhaThuoc) {
+      await step(page, 'Đổi nguồn "Thuốc nhà thuốc"', async () => {
         await doiNguon(page, dialog, true);
       }, { retries: 2 });
-      daThemNhaThuoc = true;
+      daDoiNhaThuoc = true;
     }
 
-    await step(page, `Tick thuốc ${t.ten} (${t.ma})`, async () => {
-      // Gõ vào ô tìm CỦA ĐÚNG SECTION (kho=nth0, nhà thuốc=nth1) - nhập SẠCH + verify
-      const s = dialog.getByPlaceholder(/Nhập tên thuốc/i).nth(sectionIdx);
-      await nhapSach(page, s, t.ma);
+    await step(page, `Chọn bộ chỉ định: ${key}`, async () => {
+      // Mở dropdown "Chọn bộ chỉ định" và chọn đúng toa
+      const boSel = dialog.locator('.ant-select').filter({ hasText: /bộ chỉ định/i })
+        .or(dialog.getByText(/Chọn bộ chỉ định/i).locator('xpath=ancestor::*[contains(@class,"ant-select")][1]')).first();
+      await boSel.scrollIntoViewIfNeeded();
+      await boSel.click();
+      await page.waitForTimeout(800);
+      const opt = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')
+        .filter({ hasText: def!.boChiDinh }).first();
+      await opt.waitFor({ state: 'visible', timeout: 8000 });
+      await opt.click();
       await page.waitForTimeout(2000);
-      const row = dialog.locator('tr.ant-table-row').filter({ hasText: t.ma }).first();
-      await row.locator('.ant-checkbox-wrapper').first().waitFor({ state: 'visible', timeout: 12000 });
-      await row.locator('.ant-checkbox-wrapper').first().click();
-      await page.waitForTimeout(1000);
-      // Popup cảnh báo "đã được chỉ định ... Tiếp tục chỉ định thêm?" -> Xác nhận (theo note)
-      const canhBao = page.getByRole('dialog').filter({ hasText: /Tiếp tục chỉ định thêm|Cảnh báo/i });
-      if (await canhBao.isVisible().catch(() => false)) {
-        await canhBao.getByRole('button', { name: /Xác nhận/i }).first().click();
-        await page.waitForTimeout(1000);
-      }
-    }, { retries: 2 });
-
-    await step(page, `Điền ${t.ten}: SL=${t.soLuong}${t.slSang ? ', sáng ' + t.slSang : ''}${t.slToi ? ', tối ' + t.slToi : ''}`, async () => {
-      // Dòng trong panel "Đã chọn" = dòng có tên thuốc VÀ có ô nhập (không phải checkbox)
-      const row = dialog.locator('tr.ant-table-row')
-        .filter({ hasText: new RegExp(t.ten, 'i') })
+      // Cảnh báo "thuốc đã được chỉ định..." -> Xác nhận
+      await xacNhanPopupNeuCo(page, 1500);
+      await page.waitForTimeout(1500);
+      // Chờ thuốc ĐẦU TIÊN của toa render ra bảng Đã chọn (có ô nhập) trước khi chỉnh số ngày
+      await dialog.locator('tr.ant-table-row')
+        .filter({ hasText: def!.soNgay[0].match })
         .filter({ has: page.locator('input:not([type="checkbox"])') })
-        .first();
-      // Sắp xếp các ô theo TOẠ ĐỘ X (DOM order khác thứ tự cột!) -> điền theo hạng cột:
-      // rank 0=Số ngày, 1=Sl sáng, 2=Sl chiều, 3=Sl tối, 4=Sl đêm, 5=Số lượng, 6=SL sơ cấp, 7=Cách dùng
-      const oList = row.locator('input:not([type="checkbox"]), textarea');
-      const n = await oList.count();
-      const boxes: { i: number; x: number }[] = [];
-      for (let i = 0; i < n; i++) {
-        const bb = await oList.nth(i).boundingBox().catch(() => null);
-        boxes.push({ i, x: bb ? bb.x : 999999 });
-      }
-      boxes.sort((a, b) => a.x - b.x);
-      const oTheoCot = (rank: number) => oList.nth(boxes[rank].i);
-
-      // Điền chắc: click -> xóa -> gõ từng ký tự -> Tab (commit). Verify + điền lại nếu trống.
-      const setO = async (rank: number, val: string) => {
-        const o = oTheoCot(rank);
-        for (let lan = 0; lan < 2; lan++) {
-          await o.click();
-          await o.press('Control+a');
-          await o.press('Delete');
-          await o.pressSequentially(val, { delay: 50 });
-          await o.press('Tab');
-          await page.waitForTimeout(400);
-          if ((await o.inputValue().catch(() => '')) === val) return;
-        }
-      };
-      // Điền LIỀU trước (HIS tự tính Số lượng = liều×Số ngày), rồi Số lượng CUỐI để ĐÈ lại
-      // đúng giá trị note yêu cầu (vd enpovid liều 1+1 nhưng Số lượng chỉ 10).
-      if (t.slSang) await setO(1, t.slSang);
-      if (t.slToi) await setO(3, t.slToi);
-      await setO(5, t.soLuong);
-      await page.waitForTimeout(300);
-      // Cách dùng = rank 7
-      if (boxes.length > 7) {
-        const cd = oTheoCot(7);
-        if (t.cachDung) {
-          await cd.fill(t.cachDung);
-        } else if (t.cachDungThem) {
-          const cur = (await cd.inputValue().catch(() => '')) || '';
-          await cd.fill((cur.trim() + ' ' + t.cachDungThem).trim());
-        }
-        await page.waitForTimeout(200);
-      }
+        .first().waitFor({ state: 'visible', timeout: 15000 });
     }, { retries: 2 });
+
+    // Chỉnh "Số ngày" cho từng thuốc trong toa (khớp theo tên thuốc, điền theo tiêu đề cột)
+    for (const sn of def!.soNgay) {
+      await step(page, `Số ngày (${key}) [${sn.match.source}] = ${sn.ngay}`, async () => {
+        const row = dialog.locator('tr.ant-table-row')
+          .filter({ hasText: sn.match })
+          .filter({ has: page.locator('input:not([type="checkbox"])') })
+          .first();
+        await row.waitFor({ state: 'visible', timeout: 12000 });
+        await row.scrollIntoViewIfNeeded();
+        const cols = await docCotBang(row);
+        await dienOTheoCot(page, row, cols, /Số ngày/i, sn.ngay);
+      }, { retries: 2 });
+    }
   }
 
   await step(page, 'Bấm Đồng ý [F4] (đưa thuốc vào đơn)', async () => {
     await dialog.getByRole('button', { name: /Đồng ý/i }).first().click();
     await page.waitForTimeout(2000);
+    await xacNhanPopupNeuCo(page, 800);
+    await dongCanhBaoNeuCo(page);
   });
 }
 
@@ -251,20 +266,23 @@ export async function luuDonThuoc(page: Page): Promise<void> {
 // ---- ORCHESTRATOR luồng 4 ----
 export interface Flow4Data {
   maBA: string;
-  ngay: string;        // DD/MM/YYYY (giờ mặc định 17:00:00)
-  combos: string[];    // tên combo user chọn (COMBO_CHON keys)
+  ngay: string;   // DD/MM/YYYY (giờ y lệnh auto 12:00:00)
+  toa: string[];  // tên toa user chọn (TOA keys: Enpovid/Orenko/Curam/Next)
 }
 
-// Luồng 4: đánh toa xuất viện. Theo note: KHÔNG cần điểm xác nhận - cứ Lưu hoàn thành.
+// Luồng 4: đánh toa xuất viện bằng bộ chỉ định. KHÔNG có điểm xác nhận - cứ Lưu hoàn thành.
 export async function chayLuong4(page: Page, data: Flow4Data): Promise<void> {
-  const thuoc = buildDanhSachThuoc(data.combos);
-  if (!thuoc.length) throw new Error('Chưa chọn combo thuốc nào.');
+  if (!data.toa?.length) throw new Error('Chưa chọn toa (bộ chỉ định) nào.');
 
   await moBenhNhanTheoMaBA(page, data.maBA);
   await moTabDonThuocRaVien(page);
   await taoToDonThuoc(page);              // dừng nếu đã có đơn
   await setNgayYLenhDonThuoc(page, data.ngay);
-  await chonThuoc(page, thuoc);
+  await setSoNgayVaTuNgay(page, data.ngay);
+  await chonBoChiDinh(page, data.toa);
   await checkpoint(page, 'Đơn thuốc trước khi Lưu');
+  if (process.env.L4_STOP_BEFORE_LUU === '1') {
+    throw new Error('DEBUG: dừng trước Lưu (L4_STOP_BEFORE_LUU=1). Đơn CHƯA được Lưu.');
+  }
   await luuDonThuoc(page);
 }

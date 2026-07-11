@@ -37,9 +37,9 @@ export const VACCINE_L7: Record<string, VaccineL7> = {
 };
 
 // ---- Đọc tiêu đề cột + toạ độ X của bảng chứa dòng (DOM order ≠ thứ tự cột) ----
-interface Cot { name: string; x: number; w: number }
+export interface Cot { name: string; x: number; w: number }
 
-async function docCotBang(row: Locator): Promise<Cot[]> {
+export async function docCotBang(row: Locator): Promise<Cot[]> {
   // antd bảng header cố định: <thead> nằm ở <table> RIÊNG với <tbody>.
   // -> thử table gần nhất trước, không có thì leo lên div gần nhất CÓ chứa thead.
   let ths = row.locator('xpath=ancestor::table[1]').locator('thead th');
@@ -57,7 +57,7 @@ async function docCotBang(row: Locator): Promise<Cot[]> {
 }
 
 // Điền ô nằm dưới cột có tiêu đề khớp `tenCot` (khớp theo toạ độ X, không đoán index).
-async function dienOTheoCot(page: Page, row: Locator, cols: Cot[], tenCot: RegExp, val: string): Promise<void> {
+export async function dienOTheoCot(page: Page, row: Locator, cols: Cot[], tenCot: RegExp, val: string): Promise<void> {
   const col = cols.find((c) => tenCot.test(c.name));
   if (!col) {
     throw new Error(`Không thấy cột khớp ${tenCot}. Các cột hiện có: [${cols.map((c) => c.name || '(trống)').join(' | ')}]`);
