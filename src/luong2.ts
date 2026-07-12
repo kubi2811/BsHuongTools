@@ -15,22 +15,30 @@ const LOAI_KHAM: Record<string, { code: string; noiDung: string }> = {
   'Khám chiếu đèn': { code: 'PTTT1314', noiDung: 'khám và chiếu đèn trẻ SS' },
 };
 
-const GIO_L2 = '08:30:00'; // giờ y lệnh mặc định luồng 2
+const GIO_L2 = '08:30:00'; // giờ y lệnh luồng 2 (khám sơ sinh)
+const GIO_L3 = '08:15:00'; // giờ y lệnh luồng 3 (PHCN)
 
-async function dienFormLuong2(page: Page, ngay: string): Promise<void> {
-  await step(page, `Ngày y lệnh = ${ngay} ${GIO_L2}`, async () => {
-    await setNgayGioLich(page, 'Ngày y lệnh', ngay, GIO_L2);
+// Điền form tờ điều trị con (dùng chung L2 & L3, khác nhau giờ + hướng xử trí).
+async function dienFormKham(page: Page, ngay: string, gio: string, huongXuTri: string): Promise<void> {
+  await step(page, `Ngày y lệnh = ${ngay} ${gio}`, async () => {
+    await setNgayGioLich(page, 'Ngày y lệnh', ngay, gio);
   });
   await datChanDoanZ380(page); // xóa hết chẩn đoán cũ + đặt Z38.0 + verify
   await step(page, 'Diễn biến bệnh = "Bé hồng, khóc tốt"', async () => {
     await setTextarea(page, 'Diễn biến bệnh', 'Bé hồng, khóc tốt');
   });
-  await step(page, 'Hướng xử trí = "Khám bé"', async () => {
-    await setTextarea(page, 'Hướng xử trí', 'Khám bé');
+  await step(page, `Hướng xử trí = "${huongXuTri}"`, async () => {
+    await setTextarea(page, 'Hướng xử trí', huongXuTri);
   });
   await step(page, 'Chế độ chăm sóc = "Chế độ CS Cấp III"', async () => {
     await pickAntSelect(page, 'Chế độ chăm sóc', 'Chế độ CS Cấp III');
   });
+}
+
+// Thứ 7 không? (getDay: 0=CN..6=T7)
+function laThu7(ngay: string): boolean {
+  const [d, m, y] = ngay.split('/').map((s) => Number(s.trim()));
+  return new Date(y, m - 1, d).getDay() === 6;
 }
 
 // F2 -> tick mã dịch vụ khám -> Đồng ý -> đóng cảnh báo (KHÔNG Lưu ở bước này)
@@ -77,26 +85,60 @@ export async function chayLuong2(page: Page, data: Flow2Data): Promise<void> {
   await moToDieuTri(page);
 
   // 6-11) Điền form (Z38.0, hướng xử trí "Khám bé", ...) -> Lưu
-  await dienFormLuong2(page, data.ngay);
+  await dienFormKham(page, data.ngay, GIO_L2, 'Khám bé');
   await luuToDieuTri(page);
+  await kiemTraDaLuu(page);
+
+  // 12-15) F2 chỉ định dịch vụ khám theo loại
+  await chiDinhDichVuKham(page, lk.code);
+
+  // 16-19) Khám chuyên khoa: SỬA NGÀY = ngày user, mời khoa 3050, nội dung theo loại -> Xác nhận
+  await moKhamChuyenKhoa(page, '3050', lk.noiDung, data.ngay);
+
+  // 20) Lưu cuối
+  await luuCuoiKhamChuyenKhoa(page);
+}
+
+async function kiemTraDaLuu(page: Page): Promise<void> {
   await step(page, 'Kiểm tra tờ điều trị đã lưu', async () => {
     const ok = await page.getByPlaceholder(/F2/i).first()
       .waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false);
     if (!ok) throw new Error('Tờ điều trị CHƯA lưu được (ngày y lệnh quá sớm/trùng?). Dừng an toàn.');
   });
+}
 
-  // 12-15) F2 chỉ định dịch vụ khám theo loại
-  await chiDinhDichVuKham(page, lk.code);
-
-  // 16-19) Khám chuyên khoa: mời khoa 3050 (sơ sinh) + nội dung theo loại khám -> Xác nhận
-  await moKhamChuyenKhoa(page, '3050', lk.noiDung);
-
-  // 20) Lưu cuối
+async function luuCuoiKhamChuyenKhoa(page: Page): Promise<void> {
   await checkpoint(page, 'Trước khi Lưu cuối (khám chuyên khoa)');
+  if (process.env.L23_STOP_BEFORE_LUU === '1') {
+    throw new Error('DEBUG: dừng trước Lưu cuối (L23_STOP_BEFORE_LUU=1). Chưa Lưu cuối.');
+  }
   await step(page, 'Bấm Lưu CUỐI (khám chuyên khoa)', async () => {
     await page.getByRole('button', { name: /^Lưu$/i }).last().click();
     await page.waitForTimeout(2500);
     await xacNhanPopupNeuCo(page, 800);
     await dongCanhBaoNeuCo(page);
   });
+}
+
+// ---- LUỒNG 3: KHÁM PHỤC HỒI CHỨC NĂNG (PHCN) trên hồ sơ CON ----
+export interface Flow3Data {
+  maBA: string;
+  ngay: string; // DD/MM/YYYY (giờ auto 08:15:00)
+}
+
+// Tự chạy hết, KHÔNG có điểm xác nhận. Mã dịch vụ: KB0094 (ngày thường) / KB0096 (thứ 7).
+export async function chayLuong3(page: Page, data: Flow3Data): Promise<void> {
+  const code = laThu7(data.ngay) ? 'KB0096' : 'KB0094';
+
+  await timVaMoConTheoMaBA(page, data.maBA);
+  await moToDieuTri(page);
+  await dienFormKham(page, data.ngay, GIO_L3, 'Khám PHCN');
+  await luuToDieuTri(page);
+  await kiemTraDaLuu(page);
+
+  await chiDinhDichVuKham(page, code);
+  // Khám chuyên khoa: sửa NGÀY = ngày user, mời khoa 4074 (PHCN), nội dung để trống -> Xác nhận
+  await moKhamChuyenKhoa(page, '4074', '', data.ngay);
+
+  await luuCuoiKhamChuyenKhoa(page);
 }

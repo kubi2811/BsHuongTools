@@ -9,8 +9,7 @@ import { chromium, type BrowserContext, type Page } from 'playwright';
 import { config, ROOT } from '../src/config.js';
 import { ensureLoggedIn } from '../src/login.js';
 import { setStepReporter } from '../src/helpers.js';
-import { chayLuongKhamChuyenKhoa } from '../src/flow1.js';
-import { chayLuong2 } from '../src/luong2.js';
+import { chayLuong2, chayLuong3 } from '../src/luong2.js';
 import { chayLuong4, TOA_NAMES } from '../src/luong4.js';
 import { chayLuong5 } from '../src/luong5.js';
 import { chayLuong6 } from '../src/luong6.js';
@@ -73,8 +72,6 @@ function donAnhCu(): void {
 }
 
 // ---------- Workflow manifest ----------
-const F_HOTEN = { key: 'hoTen', label: 'Tên bệnh nhân (khỏi gõ "CB")', type: 'text', required: true };
-const F_NGAY = { key: 'ngay', label: 'Ngày y lệnh (DD/MM/YYYY)', type: 'text', required: true };
 const WORKFLOWS = [
   {
     // Luồng 1 = code luồng "khám bé" (chayLuong7): mở hồ sơ con, tiêm chủng, kết thúc khám, đóng hồ sơ.
@@ -104,8 +101,11 @@ const WORKFLOWS = [
     id: 'kham-phcn',
     name: 'Khám phục hồi chức năng (Luồng 3)',
     icon: '🧑‍⚕️',
-    patientNameField: 'hoTen',
-    fields: [F_HOTEN, F_NGAY],
+    patientNameField: 'maBA',
+    fields: [
+      { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
+      { key: 'ngay', label: 'Ngày y lệnh', type: 'text', required: true },
+    ],
   },
   {
     id: 'don-thuoc-ra-vien',
@@ -204,7 +204,6 @@ async function processQueue(): Promise<void> {
     const page = await bm.getPage();
     await ensureLoggedIn(page);
 
-    const tenBenhNhan = 'CB ' + (data.hoTen || '').trim();
     // Điểm xác nhận: chờ bác sĩ bấm Xác nhận/Hủy trên UI
     const onConfirm = async (shot: string) => {
       db.prepare(`UPDATE jobs SET status='waiting_confirm', confirm_shot=?, current_step='Chờ bác sĩ xác nhận trước Lưu cuối' WHERE id=?`).run(shot, job.id);
@@ -220,7 +219,8 @@ async function processQueue(): Promise<void> {
       // Luồng 2: khám chuyên khoa sơ sinh trên hồ sơ con (tự Lưu, không dừng)
       await chayLuong2(page, { maBA: data.maBA, ngay: data.ngay, loaiKham: data.loaiKham });
     } else if (row.workflow_id === 'kham-phcn') {
-      await chayLuongKhamChuyenKhoa(page, { tenBenhNhan, ngay: data.ngay, gio: '08:02:00', huongXuTri: 'Khám phục hồi chức năng', maKhoa: '4074', noiDung: '' }, onConfirm);
+      // Luồng 3 PHCN: hồ sơ con + Z38.0 + KB0094/KB0096 (thứ 7) + khám chuyên khoa 4074. Tự Lưu.
+      await chayLuong3(page, { maBA: data.maBA, ngay: data.ngay });
     } else if (row.workflow_id === 'don-thuoc-ra-vien') {
       // Luồng 4 tìm theo Mã BA + KHÔNG có điểm xác nhận (note: cứ Lưu hoàn thành)
       await chayLuong4(page, { maBA: data.maBA, ngay: data.ngay, toa: data.toa });
