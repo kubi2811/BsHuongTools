@@ -3,10 +3,9 @@
 // -> F2 chỉ định dịch vụ khám (theo loại khám) -> Đồng ý -> đóng cảnh báo
 // -> Khám chuyên khoa (mời khoa 3050 sơ sinh + nội dung theo loại khám) -> Xác nhận -> Lưu.
 import { type Page } from 'playwright';
-import { step, checkpoint, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
+import { step, checkpoint, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo, bamLuu } from './helpers.js';
 import { moToDieuTri, setTextarea, pickAntSelect, luuToDieuTri, moKhamChuyenKhoa } from './flow1.js';
-import { timVaMoConTheoMaBA, setNgayGioLich } from './luong6.js';
-import { datChanDoanZ380 } from './luong7.js';
+import { timVaMoConTheoMaBA, setNgayGioLich, datChanDoanZ380 } from './luong6.js';
 
 // Loại khám -> mã dịch vụ (bước F2) + nội dung yêu cầu (bước Khám chuyên khoa)
 const LOAI_KHAM: Record<string, { code: string; noiDung: string }> = {
@@ -16,7 +15,7 @@ const LOAI_KHAM: Record<string, { code: string; noiDung: string }> = {
 };
 
 const GIO_L2 = '08:30:00'; // giờ y lệnh luồng 2 (khám sơ sinh)
-const GIO_L3 = '08:15:00'; // giờ y lệnh luồng 3 (PHCN)
+const GIO_L3 = '09:00:00'; // giờ y lệnh luồng 3 (PHCN) - đổi từ 08:15 để tránh trùng giờ
 
 // Điền form tờ điều trị con (dùng chung L2 & L3, khác nhau giờ + hướng xử trí).
 async function dienFormKham(page: Page, ngay: string, gio: string, huongXuTri: string): Promise<void> {
@@ -113,8 +112,7 @@ async function luuCuoiKhamChuyenKhoa(page: Page): Promise<void> {
     throw new Error('DEBUG: dừng trước Lưu cuối (L23_STOP_BEFORE_LUU=1). Chưa Lưu cuối.');
   }
   await step(page, 'Bấm Lưu CUỐI (khám chuyên khoa)', async () => {
-    await page.getByRole('button', { name: /^Lưu$/i }).last().click();
-    await page.waitForTimeout(2500);
+    await bamLuu(page); // đợi hết overlay/dialog rồi mới bấm Lưu, retry nếu bị che
     await xacNhanPopupNeuCo(page, 800);
     await dongCanhBaoNeuCo(page);
   });

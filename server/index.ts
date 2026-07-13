@@ -115,6 +115,7 @@ const WORKFLOWS = [
     fields: [
       { key: 'maBA', label: 'Mã bệnh án (mẹ)', type: 'text', required: true },
       { key: 'ngay', label: 'Ngày y lệnh', type: 'text', required: true },
+      { key: 'tuNgay', label: 'Điều trị từ ngày', type: 'date', required: true },
       { key: 'toa', label: 'Toa (bộ chỉ định - chọn nhiều được)', type: 'multiselect', options: TOA_NAMES, required: true },
     ],
   },
@@ -223,7 +224,7 @@ async function processQueue(): Promise<void> {
       await chayLuong3(page, { maBA: data.maBA, ngay: data.ngay });
     } else if (row.workflow_id === 'don-thuoc-ra-vien') {
       // Luồng 4 tìm theo Mã BA + KHÔNG có điểm xác nhận (note: cứ Lưu hoàn thành)
-      await chayLuong4(page, { maBA: data.maBA, ngay: data.ngay, toa: data.toa });
+      await chayLuong4(page, { maBA: data.maBA, ngay: data.ngay, tuNgay: data.tuNgay, toa: data.toa });
     } else if (row.workflow_id === 'nhap-thuoc') {
       // Luồng 5: tạo tờ điều trị mẹ theo cách thức đẻ, dừng ở điểm xác nhận trước Lưu
       await chayLuong5(page, { maBA: data.maBA, ngay: data.ngay }, onConfirm);

@@ -175,7 +175,8 @@ function cong1Ngay(ngay: string): string {
 }
 
 // "Số ngày cho đơn" = 5 (ô textarea số) và "Từ ngày" = Ngày y lệnh + 1 (ô chọn ngày - lịch antd).
-export async function setSoNgayVaTuNgay(page: Page, ngay: string): Promise<void> {
+// tuNgay: ngày "điều trị từ ngày" do user nhập; nếu trống -> mặc định Ngày y lệnh + 1.
+export async function setSoNgayVaTuNgay(page: Page, ngay: string, tuNgayUser?: string): Promise<void> {
   await step(page, 'Số ngày cho đơn = 5', async () => {
     const ta = page.getByText(/Số ngày cho đơn/i).first().locator('xpath=following::textarea[1]');
     await ta.click();
@@ -185,8 +186,8 @@ export async function setSoNgayVaTuNgay(page: Page, ngay: string): Promise<void>
     await ta.press('Tab');
     await page.waitForTimeout(300);
   });
-  const tuNgay = cong1Ngay(ngay);
-  await step(page, `Từ ngày = ${tuNgay} (Ngày y lệnh + 1)`, async () => {
+  const tuNgay = (tuNgayUser && tuNgayUser.trim()) ? tuNgayUser.trim() : cong1Ngay(ngay);
+  await step(page, `Từ ngày = ${tuNgay}`, async () => {
     await chonNgayAntd(page, 'Từ ngày', tuNgay);
   });
 }
@@ -281,8 +282,9 @@ export async function luuDonThuoc(page: Page): Promise<void> {
 // ---- ORCHESTRATOR luồng 4 ----
 export interface Flow4Data {
   maBA: string;
-  ngay: string;   // DD/MM/YYYY (giờ y lệnh auto 12:00:00)
-  toa: string[];  // tên toa user chọn (TOA keys: Enpovid/Orenko/Curam/Next)
+  ngay: string;    // DD/MM/YYYY (giờ y lệnh auto 12:00:00)
+  tuNgay?: string; // "điều trị từ ngày" do user nhập (trống -> Ngày y lệnh + 1)
+  toa: string[];   // tên toa user chọn (TOA keys: Enpovid/Orenko/Curam/Next)
 }
 
 // Luồng 4: đánh toa xuất viện bằng bộ chỉ định. KHÔNG có điểm xác nhận - cứ Lưu hoàn thành.
@@ -293,7 +295,7 @@ export async function chayLuong4(page: Page, data: Flow4Data): Promise<void> {
   await moTabDonThuocRaVien(page);
   await taoToDonThuoc(page);              // dừng nếu đã có đơn
   await setNgayYLenhDonThuoc(page, data.ngay);
-  await setSoNgayVaTuNgay(page, data.ngay);
+  await setSoNgayVaTuNgay(page, data.ngay, data.tuNgay);
   await chonBoChiDinh(page, data.toa);
   await checkpoint(page, 'Đơn thuốc trước khi Lưu');
   if (process.env.L4_STOP_BEFORE_LUU === '1') {

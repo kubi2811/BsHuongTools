@@ -51,6 +51,36 @@ export async function dongCanhBaoNeuCo(page: Page): Promise<boolean> {
   return false;
 }
 
+// Bấm 1 nút trong dialog rồi ĐỢI dialog đóng hẳn; retry nếu chưa đóng (vd "Xác nhận" khám chuyên khoa
+// đôi lúc bấm hụt -> dialog còn mở che nút Lưu -> lỗi "subtree intercepts pointer events").
+export async function bamRoiChoDongDialog(page: Page, dialog: Locator, tenNut: RegExp, lanThu = 3): Promise<void> {
+  for (let i = 0; i < lanThu; i++) {
+    await dialog.getByRole('button', { name: tenNut }).first().click().catch(() => {});
+    await page.waitForTimeout(1300);
+    if (!(await dialog.isVisible().catch(() => false))) return;
+  }
+  throw new Error('Dialog không đóng sau khi bấm nút (còn che màn hình).');
+}
+
+// Bấm nút "Lưu" (góc phải) CHẮC CHẮN: đợi spinner "Vui lòng chờ"/ant-spin tắt + không còn dialog che,
+// rồi mới bấm; retry nếu bị chặn; cuối cùng force click.
+export async function bamLuu(page: Page): Promise<void> {
+  const luu = page.getByRole('button', { name: /^\s*Lưu\s*$/i }).last();
+  for (let i = 0; i < 4; i++) {
+    await page.locator('.ant-spin-spinning').first().waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+    await page.getByText(/Vui lòng chờ/i).first().waitFor({ state: 'hidden', timeout: 4000 }).catch(() => {});
+    try {
+      await luu.click({ timeout: 6000 });
+      await page.waitForTimeout(1500);
+      return;
+    } catch {
+      await page.waitForTimeout(1500);
+    }
+  }
+  await luu.click({ force: true }).catch(() => {});
+  await page.waitForTimeout(1500);
+}
+
 // Hook báo tiến độ để server ghi log + hiển thị lên UI (đặt bởi executor)
 export type StepReport = { name: string; screenshot: string; level: 'info' | 'error'; durationMs: number; error?: string };
 let reporter: ((r: StepReport) => void) | null = null;

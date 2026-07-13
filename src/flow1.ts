@@ -3,7 +3,7 @@
 // điền form tờ điều trị, tìm bệnh nhân, reset bộ lọc, khám chuyên khoa...
 import { type Page, type Locator } from 'playwright';
 import { config } from './config.js';
-import { step, chupManHinh, checkpoint, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
+import { step, chupManHinh, checkpoint, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo, bamRoiChoDongDialog } from './helpers.js';
 import { dangNhapLaiNeuCan, dongThongBao } from './login.js';
 
 // Điều hướng tới 1 trang HIS an toàn: nếu session hết hạn (bị đá về login) -> tự đăng
@@ -296,10 +296,9 @@ export async function moKhamChuyenKhoa(page: Page, maKhoa: string, noiDung: stri
     });
   }
 
-  await step(page, 'Bấm Xác nhận (khám chuyên khoa)', async () => {
-    await dialog.getByRole('button', { name: /Xác nhận/i }).click();
-    await page.waitForTimeout(1500);
-  });
+  await step(page, 'Bấm Xác nhận (khám chuyên khoa) & chờ dialog đóng', async () => {
+    await bamRoiChoDongDialog(page, dialog, /^\s*Xác nhận\s*$/i);
+  }, { retries: 1 });
 }
 
 // (Luồng 2/3 orchestrator cũ đã bỏ - nay dùng src/luong2.ts: chayLuong2 & chayLuong3 trên hồ sơ con.)

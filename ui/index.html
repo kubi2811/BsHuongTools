@@ -187,7 +187,7 @@ function renderField(fbox, f, state) {
     const inp = wrap.querySelector('input');
     inp.onchange = () => { let v = inp.value || ''; if (v.length === 5) v += ':00'; state[f.key] = v; };
     fbox.appendChild(wrap);
-  } else if (f.key === 'ngay') {
+  } else if (f.key === 'ngay' || f.type === 'date') {
     const p = n => String(n).padStart(2, '0');
     const t = new Date();
     const isoLocal = t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate());

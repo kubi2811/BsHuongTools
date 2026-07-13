@@ -1,7 +1,7 @@
 // LUỒNG 6: Nhập sàng lọc bé (xét nghiệm sàng lọc sơ sinh).
 // Tìm MẸ theo Mã BA -> hover tên mẹ mở hồ sơ CON -> tờ điều trị con -> chẩn đoán Z38.0
 // -> hướng xử trí "Xét nghiệm sàng lọc" -> Lưu -> F2 chỉ định XN (XN000530 [+XN000536]).
-import { type Page } from 'playwright';
+import { type Page, type Locator } from 'playwright';
 import { config } from './config.js';
 import { step, checkpoint, chupManHinh, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
 import {
@@ -54,9 +54,16 @@ export async function timVaMoConTheoMaBA(page: Page, maBA: string): Promise<void
     await s.press('Enter');
     await page.waitForTimeout(2500);
 
-    // Chờ ĐÚNG dòng có liên kết CON (chứng tỏ bảng đã lọc xong, không phải kết quả cũ)
+    // Chờ ĐÚNG dòng có liên kết CON (chứng tỏ bảng đã lọc xong, không phải kết quả cũ).
+    // Nếu không có -> báo lỗi RÕ: mã BA sai (không có bệnh nhân) hay có nhưng không phải ca mẹ+con.
     const conNames = page.locator('tr.ant-table-row .con-name');
-    await conNames.first().waitFor({ state: 'visible', timeout: 15000 });
+    const daHienCon = await conNames.first().waitFor({ state: 'visible', timeout: 15000 })
+      .then(() => true).catch(() => false);
+    if (!daHienCon) {
+      const soDong = await page.locator('tr.ant-table-row').count();
+      if (soDong === 0) throw new Error(`Không tìm thấy bệnh nhân với Mã BA "${maBA}" — kiểm tra lại mã BA (gõ đủ/đúng số).`);
+      throw new Error(`Có bệnh nhân nhưng KHÔNG thấy hồ sơ CON (không phải ca mẹ+con?) — kiểm tra lại Mã BA "${maBA}".`);
+    }
     const soCon = await conNames.count();
     if (soCon > 1) {
       throw new Error(`Kết quả có ${soCon} bé (sinh đôi hoặc lọc chưa đúng) - KHÔNG tự đoán, dừng an toàn.`);
@@ -115,6 +122,36 @@ export async function setChanDoan(page: Page, ma = 'z38.0'): Promise<void> {
   }, { retries: 2 });
 }
 
+// ---- Chẩn đoán: XÓA HẾT tag cũ rồi đặt Z38.0, có VERIFY (sai chẩn đoán là hại bệnh nhân) ----
+function oChanDoan(page: Page): Locator {
+  return page.getByText(/Chẩn đoán bệnh/i).first()
+    .locator('xpath=ancestor::div[contains(@class,"ant-row") or contains(@class,"ant-col")][1]');
+}
+
+export async function datChanDoanZ380(page: Page): Promise<void> {
+  const CLOSE = '.ant-select-selection-item-remove, .ant-tag-close-icon, .anticon-close, svg[data-icon="close"]';
+
+  await step(page, 'Xóa hết chẩn đoán bệnh cũ', async () => {
+    const box = oChanDoan(page);
+    await box.first().waitFor({ state: 'visible', timeout: 15000 });
+    for (let i = 0; i < 25; i++) {
+      const closes = box.locator(CLOSE);
+      if (!(await closes.count())) break;
+      await closes.first().click({ force: true });
+      await page.waitForTimeout(350);
+    }
+    const con = await box.locator(CLOSE).count();
+    if (con) throw new Error(`Còn ${con} tag chẩn đoán chưa xóa được - dừng an toàn.`);
+  }, { retries: 1 });
+
+  await setChanDoan(page, 'z38.0');
+
+  await step(page, 'Kiểm tra chẩn đoán = Z38.0', async () => {
+    const txt = ((await oChanDoan(page).textContent().catch(() => '')) || '');
+    if (!/z38\.0/i.test(txt)) throw new Error(`Chẩn đoán sau khi đặt không chứa Z38.0 (đang là: "${txt.slice(0, 80)}") - dừng an toàn.`);
+  });
+}
+
 // ---- Diễn biến bệnh: ghi text tự do (textarea) hoặc combobox "Chọn diễn biến" ----
 async function setDienBien(page: Page, text: string): Promise<void> {
   await step(page, `Diễn biến bệnh = "${text}"`, async () => {
@@ -140,7 +177,7 @@ export async function dienFormLuong6(page: Page, ngay: string): Promise<void> {
     await setNgayGioLich(page, 'Ngày y lệnh', ngay, '09:00:00');
   });
   await setDienBien(page, 'Bé hồng, khóc tốt');
-  await setChanDoan(page, 'z38.0');
+  await datChanDoanZ380(page); // xóa hết chẩn đoán cũ + đặt Z38.0 + VERIFY (tránh Lưu hụt -> lỗi F2)
   await step(page, 'Hướng xử trí = "Xét nghiệm sàng lọc"', async () => {
     await setTextarea(page, 'Hướng xử trí', 'Xét nghiệm sàng lọc');
   });

@@ -7,7 +7,7 @@
 import { type Page, type Locator } from 'playwright';
 import { step, checkpoint, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
 import { moToDieuTri, setTextarea, pickAntSelect, luuToDieuTri, luuPhieuSangLoc } from './flow1.js';
-import { timVaMoConTheoMaBA, setNgayGioLich, setChanDoan } from './luong6.js';
+import { timVaMoConTheoMaBA, setNgayGioLich, datChanDoanZ380 } from './luong6.js';
 
 // Bật L7_STOP_AFTER_FORM=1 để DỪNG sau khi điền form (chưa Lưu gì) - dùng khi test lần đầu.
 const STOP_AFTER_FORM = process.env.L7_STOP_AFTER_FORM === '1';
@@ -84,35 +84,7 @@ export async function dienOTheoCot(page: Page, row: Locator, cols: Cot[], tenCot
   throw new Error(`Không thấy ô nhập nào nằm dưới cột "${col.name}".`);
 }
 
-// ---- Chẩn đoán: XÓA HẾT tag cũ rồi đặt Z38.0, có VERIFY (sai chẩn đoán là hại bệnh nhân) ----
-function oChanDoan(page: Page): Locator {
-  return page.getByText(/Chẩn đoán bệnh/i).first()
-    .locator('xpath=ancestor::div[contains(@class,"ant-row") or contains(@class,"ant-col")][1]');
-}
-
-export async function datChanDoanZ380(page: Page): Promise<void> {
-  const CLOSE = '.ant-select-selection-item-remove, .ant-tag-close-icon, .anticon-close, svg[data-icon="close"]';
-
-  await step(page, 'Xóa hết chẩn đoán bệnh cũ', async () => {
-    const box = oChanDoan(page);
-    await box.first().waitFor({ state: 'visible', timeout: 15000 });
-    for (let i = 0; i < 25; i++) {
-      const closes = box.locator(CLOSE);
-      if (!(await closes.count())) break;
-      await closes.first().click({ force: true });
-      await page.waitForTimeout(350);
-    }
-    const con = await box.locator(CLOSE).count();
-    if (con) throw new Error(`Còn ${con} tag chẩn đoán chưa xóa được - dừng an toàn.`);
-  }, { retries: 1 });
-
-  await setChanDoan(page, 'z38.0');
-
-  await step(page, 'Kiểm tra chẩn đoán = Z38.0', async () => {
-    const txt = ((await oChanDoan(page).textContent().catch(() => '')) || '');
-    if (!/z38\.0/i.test(txt)) throw new Error(`Chẩn đoán sau khi đặt không chứa Z38.0 (đang là: "${txt.slice(0, 80)}") - dừng an toàn.`);
-  });
-}
+// (datChanDoanZ380 đã chuyển sang luong6.ts để dùng chung, tránh vòng import.)
 
 // ---- Điền form tờ điều trị của CON ----
 export async function dienFormLuong7(page: Page, ngay: string, gio: string): Promise<void> {
