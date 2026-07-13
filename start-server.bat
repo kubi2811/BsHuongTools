@@ -15,6 +15,9 @@ echo    Cu de cua so nay MO trong luc dung. Dong = tat server.
 echo ============================================================
 echo.
 
+REM Dung server cu dang chiem port 3000 (neu co) de chay ban MOI - tranh chay 2 server.
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":3000" ^| findstr "LISTENING"') do taskkill /F /PID %%p >nul 2>&1
+
 set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 call npm run server
 

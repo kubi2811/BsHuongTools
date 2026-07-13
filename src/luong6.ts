@@ -104,22 +104,32 @@ export async function timVaMoConTheoMaBA(page: Page, maBA: string): Promise<void
   }, { retries: 3 });
 }
 
-// ---- Chẩn đoán bệnh (ant-select searchable): gõ mã -> chọn option ----
+// ---- Chẩn đoán bệnh (ant-select tag, searchable): gõ mã -> chọn option -> VERIFY chip đã dính.
+// Trước hay bị: chọn option xong nhưng form không commit (chip không hiện) -> khi Lưu chẩn đoán trống.
 export async function setChanDoan(page: Page, ma = 'z38.0'): Promise<void> {
-  const maEsc = ma.replace(/\./g, '\\.');
+  const maRe = new RegExp(ma.replace(/\./g, '\\.'), 'i');
+  const box = oChanDoan(page); // ô "Chẩn đoán bệnh"
   await step(page, `Chẩn đoán bệnh = ${ma.toUpperCase()}`, async () => {
-    const sel = page.getByText(/Chẩn đoán bệnh|Chẩn đoán chính/i).first()
-      .locator('xpath=following::*[contains(@class,"ant-select")][1]');
-    await sel.scrollIntoViewIfNeeded();
-    await sel.click();
-    await page.waitForTimeout(400);
-    await page.keyboard.type(ma, { delay: 45 }); // gõ lọc
-    await page.waitForTimeout(1300);
-    const opt = page.locator('.ant-select-item-option', { hasText: new RegExp(maEsc, 'i') }).first();
-    await opt.waitFor({ state: 'visible', timeout: 8000 });
-    await opt.click();
-    await page.waitForTimeout(500);
-  }, { retries: 2 });
+    for (let lan = 0; lan < 3; lan++) {
+      const sel = box.locator('.ant-select').first();
+      await sel.scrollIntoViewIfNeeded();
+      await sel.click();
+      await page.waitForTimeout(400);
+      await page.keyboard.type(ma, { delay: 45 }); // gõ lọc
+      await page.waitForTimeout(1300);
+      const opt = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option', { hasText: maRe }).first();
+      if (await opt.count()) {
+        await opt.click();
+        await page.waitForTimeout(700);
+      }
+      // VERIFY: chip ĐÃ CHỌN (.ant-select-selection-item) trong ô chẩn đoán chứa mã
+      const chip = (await box.locator('.ant-select-selection-item').allTextContents()).join(' ');
+      if (maRe.test(chip)) return;
+      await page.keyboard.press('Escape').catch(() => {}); // đóng dropdown, thử lại
+      await page.waitForTimeout(400);
+    }
+    throw new Error(`Không chọn được chẩn đoán ${ma.toUpperCase()} (chip không dính sau 3 lần) - dừng an toàn.`);
+  });
 }
 
 // ---- Chẩn đoán: XÓA HẾT tag cũ rồi đặt Z38.0, có VERIFY (sai chẩn đoán là hại bệnh nhân) ----
@@ -258,6 +268,13 @@ export async function chayLuong6(
   // 3) Điền form (ngày, diễn biến, chẩn đoán Z38.0, hướng xử trí, chế độ CS) rồi Lưu
   await dienFormLuong6(page, data.ngay);
   await luuToDieuTri(page); // tự Lưu + tự Xác nhận popup tạo trùng nếu có
+
+  // Xác minh ĐÃ LƯU THẬT (nếu chẩn đoán/ngày lỗi -> form còn "Thêm mới" -> báo rõ, không mù ở F2)
+  await step(page, 'Kiểm tra tờ điều trị đã lưu', async () => {
+    const ok = await page.getByPlaceholder(/F2/i).first()
+      .waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false);
+    if (!ok) throw new Error('Tờ điều trị CHƯA lưu được (chẩn đoán chưa dính / ngày y lệnh sớm-trùng?). Dừng an toàn.');
+  });
 
   // 4) Chỉ định xét nghiệm sàng lọc (F2) - tick các mã user chọn
   await chiDinhXetNghiem(page, data.codes);

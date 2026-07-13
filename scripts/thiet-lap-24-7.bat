@@ -44,7 +44,8 @@ reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power" /v Hiberbo
 echo       -^> OK
 
 echo [5/5] Tu chay HIS server khi dang nhap Windows...
-schtasks /create /tn "HIS Server 24-7" /tr "\"%ROOT%\start-server.bat\"" /sc onlogon /rl highest /f >nul
+REM Tao tac vu chay MUC BINH THUONG (KHONG /rl highest) de co the restart de dang khi cap nhat code.
+schtasks /create /tn "HIS Server 24-7" /tr "\"%ROOT%\start-server.bat\"" /sc onlogon /f >nul
 if %errorlevel%==0 (echo       -^> OK: tao tac vu "HIS Server 24-7") else (echo       -^> Loi tao tac vu ^(bo qua cung duoc, van chay tay bang start-server.bat^))
 
 echo.
