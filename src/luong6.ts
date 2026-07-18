@@ -3,7 +3,7 @@
 // -> hướng xử trí "Xét nghiệm sàng lọc" -> Lưu -> F2 chỉ định XN (XN000530 [+XN000536]).
 import { type Page, type Locator } from 'playwright';
 import { config } from './config.js';
-import { step, checkpoint, chupManHinh, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
+import { step, checkpoint, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
 import {
   resetBoLocTimKiem, chonKhoaLamViec, moToDieuTri,
   setTextarea, pickAntSelect, luuToDieuTri, moTrangHIS,
@@ -255,7 +255,7 @@ export interface Flow6Data {
 export async function chayLuong6(
   page: Page,
   data: Flow6Data,
-  onConfirm: (screenshot: string) => Promise<boolean>
+  _onConfirm: (screenshot: string) => Promise<boolean>
 ): Promise<void> {
   if (!data.codes?.length) throw new Error('Chưa chọn loại xét nghiệm sàng lọc nào.');
 
@@ -279,8 +279,8 @@ export async function chayLuong6(
   // 4) Chỉ định xét nghiệm sàng lọc (F2) - tick các mã user chọn
   await chiDinhXetNghiem(page, data.codes);
 
-  // 5) ĐIỂM XÁC NHẬN trước nút Lưu CUỐI (an toàn y lệnh - đây là chỉ định có phí)
-  const shot = await chupManHinh(page, 'l6-xac-nhan-truoc-luu-cuoi');
-  const choPhep = await onConfirm(shot);
-  if (choPhep) await luuSangLocCuoi(page);
+  // 5) Theo yêu cầu bác sĩ: TỰ bấm Lưu CUỐI luôn, KHÔNG chờ xác nhận.
+  //    Vẫn chụp ảnh trước khi Lưu để lưu vết trên timeline (audit).
+  await checkpoint(page, 'Trước khi Lưu cuối (tự lưu - sàng lọc)');
+  await luuSangLocCuoi(page);
 }
