@@ -34,6 +34,37 @@ export async function setNgayGioLich(page: Page, nhan: string, ngay: string, gio
   console.warn(`  ⚠️  Ngày y lệnh chưa nhận đúng "${full}" sau 3 lần - kiểm tra khi xác nhận.`);
 }
 
+// Cộng thêm phút vào chuỗi giờ "HH:mm:ss".
+function themPhut(gio: string, phut: number): string {
+  const [h, m, s] = gio.split(':').map((x) => Number(x) || 0);
+  const t = new Date(2000, 0, 1, h, m, s);
+  t.setMinutes(t.getMinutes() + phut);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
+}
+
+// LƯU TỜ ĐIỀU TRỊ CHẮC CHẮN.
+// HIS chặn 2 tờ điều trị TRÙNG ngày+giờ y lệnh trong 1 khoa và từ chối IM LẶNG (không báo lỗi):
+// form vẫn ở "Thêm mới", không có ô F2 -> các bước sau fail khó hiểu.
+// -> Lưu, kiểm tra đã lưu; nếu chưa thì TỰ ĐỔI GIỜ +5 phút rồi Lưu lại (tối đa 3 lần).
+export async function luuToDieuTriChacChan(page: Page, ngay: string, gio: string): Promise<void> {
+  for (let lan = 0; lan < 3; lan++) {
+    await luuToDieuTri(page);
+    const daLuu = await page.getByPlaceholder(/F2/i).first()
+      .waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false);
+    if (daLuu) return;
+    if (lan === 2) break;
+    const gioMoi = themPhut(gio, (lan + 1) * 5);
+    await step(page, `Tờ chưa lưu (có thể trùng giờ y lệnh) -> đổi giờ sang ${gioMoi} rồi Lưu lại`, async () => {
+      await setNgayGioLich(page, 'Ngày y lệnh', ngay, gioMoi);
+    });
+  }
+  throw new Error(
+    'Tờ điều trị KHÔNG lưu được sau 3 lần (đã thử đổi giờ). Nhiều khả năng TRÙNG ngày+giờ y lệnh ' +
+    'với tờ đã có, hoặc thiếu trường bắt buộc. Dừng an toàn.'
+  );
+}
+
 // ---- Tìm MẸ theo Mã BA rồi mở hồ sơ CON (hover tên -> popup -> link chi tiết con) ----
 export async function timVaMoConTheoMaBA(page: Page, maBA: string): Promise<void> {
   const listUrl = config.hisUrl.replace(/\/$/, '') + '/quan-ly-noi-tru/danh-sach-nguoi-benh-noi-tru';
@@ -181,10 +212,12 @@ async function setDienBien(page: Page, text: string): Promise<void> {
   });
 }
 
+export const GIO_L6 = '09:00:00'; // giờ y lệnh luồng 6 (sàng lọc)
+
 // ---- Điền form Tờ điều trị của CON cho sàng lọc ----
 export async function dienFormLuong6(page: Page, ngay: string): Promise<void> {
-  await step(page, `Ngày y lệnh = ${ngay} 09:00:00`, async () => {
-    await setNgayGioLich(page, 'Ngày y lệnh', ngay, '09:00:00');
+  await step(page, `Ngày y lệnh = ${ngay} ${GIO_L6}`, async () => {
+    await setNgayGioLich(page, 'Ngày y lệnh', ngay, GIO_L6);
   });
   await setDienBien(page, 'Bé hồng, khóc tốt');
   await datChanDoanZ380(page); // xóa hết chẩn đoán cũ + đặt Z38.0 + VERIFY (tránh Lưu hụt -> lỗi F2)
@@ -267,14 +300,8 @@ export async function chayLuong6(
 
   // 3) Điền form (ngày, diễn biến, chẩn đoán Z38.0, hướng xử trí, chế độ CS) rồi Lưu
   await dienFormLuong6(page, data.ngay);
-  await luuToDieuTri(page); // tự Lưu + tự Xác nhận popup tạo trùng nếu có
-
-  // Xác minh ĐÃ LƯU THẬT (nếu chẩn đoán/ngày lỗi -> form còn "Thêm mới" -> báo rõ, không mù ở F2)
-  await step(page, 'Kiểm tra tờ điều trị đã lưu', async () => {
-    const ok = await page.getByPlaceholder(/F2/i).first()
-      .waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false);
-    if (!ok) throw new Error('Tờ điều trị CHƯA lưu được (chẩn đoán chưa dính / ngày y lệnh sớm-trùng?). Dừng an toàn.');
-  });
+  // Lưu + xác minh; nếu HIS chặn im lặng (trùng giờ y lệnh) thì tự đổi giờ rồi Lưu lại
+  await luuToDieuTriChacChan(page, data.ngay, GIO_L6);
 
   // 4) Chỉ định xét nghiệm sàng lọc (F2) - tick các mã user chọn
   await chiDinhXetNghiem(page, data.codes);

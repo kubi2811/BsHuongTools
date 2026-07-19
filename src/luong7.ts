@@ -6,23 +6,11 @@
 // KHÔNG có điểm xác nhận: chạy tự động hết (theo yêu cầu bác sĩ).
 import { type Page, type Locator } from 'playwright';
 import { step, checkpoint, nhapSach, xacNhanPopupNeuCo, dongCanhBaoNeuCo } from './helpers.js';
-import { moToDieuTri, setTextarea, pickAntSelect, luuToDieuTri, luuPhieuSangLoc } from './flow1.js';
-import { timVaMoConTheoMaBA, setNgayGioLich, datChanDoanZ380 } from './luong6.js';
+import { moToDieuTri, setTextarea, pickAntSelect, luuPhieuSangLoc } from './flow1.js';
+import { timVaMoConTheoMaBA, setNgayGioLich, datChanDoanZ380, luuToDieuTriChacChan } from './luong6.js';
 
 // Bật L7_STOP_AFTER_FORM=1 để DỪNG sau khi điền form (chưa Lưu gì) - dùng khi test lần đầu.
 const STOP_AFTER_FORM = process.env.L7_STOP_AFTER_FORM === '1';
-
-// Đọc thông báo lỗi validation của HIS (truyền dạng CHUỖI: esbuild chèn __name làm hỏng function).
-const DOC_LOI_JS = `(() => {
-  const out = [];
-  const push = (t) => { t = (t || '').trim().replace(/\\s+/g, ' '); if (t && out.indexOf(t) < 0) out.push(t.slice(0, 140)); };
-  document.querySelectorAll('.ant-form-item-explain-error, .ant-form-item-explain, .ant-message-error, .ant-message-notice, .ant-notification-notice-message, .ant-notification-notice-description').forEach((e) => push(e.textContent));
-  document.querySelectorAll('.ant-form-item-has-error, .ant-select-status-error, .ant-input-status-error, [class*="has-error"]').forEach((e) => {
-    const box = e.closest('.ant-row, .ant-form-item, div');
-    push('TRUONG LOI: ' + ((box && box.textContent) || '').trim().slice(0, 70));
-  });
-  return out.slice(0, 12);
-})()`;
 
 export interface VaccineL7 {
   code: string;        // mã trong bảng (BCG0001 / VGB0002) - tick chính xác
@@ -318,20 +306,8 @@ export async function chayLuong7(page: Page, data: Flow7Data): Promise<void> {
       throw new Error('DEBUG: dừng sau khi điền form (L7_STOP_AFTER_FORM=1). Chưa Lưu gì cả.');
     }
 
-    // 11) Lưu tờ điều trị
-    await luuToDieuTri(page);
-
-    // Xác minh ĐÃ LƯU THẬT: nếu validation chặn, form vẫn ở "Thêm mới" và không có ô F2.
-    // Đọc luôn thông báo lỗi của HIS để biết THIẾU TRƯỜNG NÀO (không đoán mò).
-    await step(page, 'Kiểm tra tờ điều trị đã lưu', async () => {
-      await page.waitForTimeout(1500);
-      const loi = (await page.evaluate(DOC_LOI_JS).catch(() => [])) as string[];
-      const daLuu = await page.getByPlaceholder(/F2/i).first()
-        .waitFor({ state: 'visible', timeout: 12000 }).then(() => true).catch(() => false);
-      if (!daLuu) {
-        throw new Error('Tờ điều trị CHƯA lưu được. HIS báo: ' + (loi.length ? loi.join(' || ') : '(không đọc được thông báo lỗi)'));
-      }
-    });
+    // 11) Lưu tờ điều trị + xác minh; nếu HIS chặn im lặng (trùng giờ y lệnh) -> tự đổi giờ, Lưu lại
+    await luuToDieuTriChacChan(page, data.ngay, data.gio);
 
     // 12-16) F2 -> PK022 -> Đồng ý -> đóng cảnh báo -> Lưu
     await chiDinhPK022(page);
