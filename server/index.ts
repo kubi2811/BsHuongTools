@@ -229,9 +229,13 @@ async function processQueue(): Promise<void> {
       // Luồng 5: tạo tờ điều trị mẹ theo cách thức đẻ, dừng ở điểm xác nhận trước Lưu
       await chayLuong5(page, { maBA: data.maBA, ngay: data.ngay }, onConfirm);
     } else if (row.workflow_id === 'sang-loc-be') {
-      // Luồng 6: map loại XN -> mã dịch vụ (Thường quy=XN000530, Mở rộng=XN000536); chọn 1 hoặc cả 2
-      const mapXN: Record<string, string> = { 'Thường quy': 'XN000530', 'Mở rộng': 'XN000536' };
-      const codes = (data.loaiXN || []).map((x: string) => mapXN[x]).filter(Boolean);
+      // Luồng 6: map loại XN -> mã dịch vụ. LƯU Ý: "Mở rộng" gồm CẢ XN000530 lẫn XN000536
+      // (theo quy trình: nhập 530 chọn trước, rồi mới nhập 536 chọn thêm), không phải chỉ 536.
+      const mapXN: Record<string, string[]> = {
+        'Thường quy': ['XN000530'],
+        'Mở rộng': ['XN000530', 'XN000536'],
+      };
+      const codes: string[] = [...new Set<string>((data.loaiXN || []).flatMap((x: string) => mapXN[x] || []))];
       await chayLuong6(page, { maBA: data.maBA, ngay: data.ngay, codes }, onConfirm);
     } else {
       throw new Error('Workflow chưa hỗ trợ: ' + row.workflow_id);
