@@ -1,0 +1,68 @@
+========================================================================
+  TRO LY NHAP LIEU HIS - HUONG DAN CHAY TREN MAY MOI
+========================================================================
+
+CAN GI TREN MAY MOI
+------------------------------------------------------------------------
+1. Windows 10/11
+2. Microsoft Edge   (Windows co san - bot chay bang Edge)
+3. Node.js ban LTS  -> https://nodejs.org
+   (May goc dung Node v24. Cai ban khac cung duoc, script se tu cai lai
+    thu vien - luc do CAN INTERNET mot lan.)
+4. Cung mang LAN benh vien (de vao duoc https://bvtudu.tudu.com.vn)
+
+
+CAC BUOC LAM
+------------------------------------------------------------------------
+B1. Giai nen file zip ra o dia, vi du:  D:\BSHuongTool
+    (Nen de o o D: hoac C:, TRANH de trong Downloads/Desktop cho gon)
+
+B2. Vao thu muc scripts, bam dup:  cai-dat-may-moi.bat
+    -> Script tu kiem tra Node, Edge, .env va thu vien.
+    -> Neu bao thieu gi thi lam theo huong dan tren man hinh.
+
+B3. Quay ra thu muc goc, bam dup:  start-server.bat
+    -> Hien cua so den, bao "Tro ly nhap lieu HIS dang chay"
+    -> DE CUA SO NAY MO trong luc dung (dong = tat bot)
+
+B4. Mo trinh duyet:
+    - Ngay tren may nay :  http://localhost:3000
+    - Tu dien thoai      :  http://<IP-may-tinh>:3000
+      (IP hien san trong cua so den luc khoi dong)
+    - Ma PIN: xem trong file .env  (mac dinh 1234)
+
+
+MUON BOT TU CHAY 24/7 (khong can bam gi)
+------------------------------------------------------------------------
+Chuot phai  scripts\thiet-lap-24-7.bat  -> "Run as administrator"
+Script se:
+  - Chan Windows Update tu khoi dong lai giua chung
+  - Khong sleep khi cam dien, gap man hinh van chay
+  - Tu chay bot moi khi dang nhap Windows
+Sau do khoi dong lai may 1 lan.
+
+
+LUU Y QUAN TRONG
+------------------------------------------------------------------------
+* File .env chua TAI KHOAN + MAT KHAU HIS va ma PIN.
+  -> KHONG gui file zip nay cho nguoi khac.
+  -> Neu may moi la may dung chung, nen doi PIN trong .env.
+
+* Zip nay KHONG kem thu muc data\ (anh chup + lich su job cua benh nhan).
+  Do la co y: tranh mang du lieu benh nhan sang may khac.
+  May moi se tu tao data\ rong khi chay lan dau.
+
+* Neu doi mat khau HIS: sua lai HIS_PASS trong file .env roi khoi dong lai bot.
+
+* Cap nhat code moi nhat (neu may co Internet):
+    git pull        (neu co git)
+  hoac tai lai zip moi tu may goc.
+
+
+GAP LOI THI XEM O DAU
+------------------------------------------------------------------------
+- Cua so den bao loi gi thi doc dong do.
+- Anh chup tung buoc + log nam trong:  data\screenshots\
+- Vao giao dien web -> bam vao tung Job de xem no chay den buoc nao,
+  co anh chup minh hoa tung buoc.
+========================================================================
