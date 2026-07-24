@@ -12,20 +12,14 @@ CAN GI TREN MAY MOI
 4. Cung mang LAN benh vien (de vao duoc https://bvtudu.tudu.com.vn)
 
 
-CAC BUOC LAM
+CACH NHANH NHAT - 1 CLICK
 ------------------------------------------------------------------------
-B1. Giai nen file zip ra o dia, vi du:  D:\BSHuongTool
-    (Nen de o o D: hoac C:, TRANH de trong Downloads/Desktop cho gon)
-
-B2. Vao thu muc scripts, bam dup:  cai-dat-may-moi.bat
-    -> Script tu kiem tra Node, Edge, .env va thu vien.
-    -> Neu bao thieu gi thi lam theo huong dan tren man hinh.
-
-B3. Quay ra thu muc goc, bam dup:  start-server.bat
-    -> Hien cua so den, bao "Tro ly nhap lieu HIS dang chay"
-    -> DE CUA SO NAY MO trong luc dung (dong = tat bot)
-
-B4. Mo trinh duyet:
+B1. Giai nen zip ra o dia, vi du:  D:BSHuongTool
+B2. Bam dup file:  CHAY-HIS.bat     <-- CHI CAN FILE NAY
+    -> Tu kiem tra + TU CAI Node.js neu may chua co (can Internet lan dau)
+    -> Tu cai thu vien neu thieu
+    -> Tu chay bot luon
+B3. Mo trinh duyet:
     - Ngay tren may nay :  http://localhost:3000
     - Tu dien thoai      :  http://<IP-may-tinh>:3000
       (IP hien san trong cua so den luc khoi dong)
