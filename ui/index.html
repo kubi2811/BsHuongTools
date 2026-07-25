@@ -37,7 +37,9 @@
 </style>
 </head>
 <body>
-<header>💉 Trợ lý nhập liệu HIS <span id="sysDot" style="margin-left:auto;font-size:13px;font-weight:500"></span></header>
+<header>💉 Trợ lý nhập liệu HIS
+  <span id="ver" style="font-size:12px;font-weight:500;opacity:.85"></span>
+  <span id="sysDot" style="margin-left:auto;font-size:13px;font-weight:500"></span></header>
 <div class="wrap" id="app"></div>
 
 <script>
@@ -51,6 +53,14 @@ const api = async (url, opt) => {
 const STATUS_VI = { queued:'Trong hàng đợi', running:'Đang chạy', waiting_confirm:'Chờ xác nhận', success:'Thành công', failed:'Lỗi', canceled:'Đã hủy' };
 const STATUS_COLOR = { queued:'#64748b', running:'#1f6feb', waiting_confirm:'#d97706', success:'#16a34a', failed:'#dc2626', canceled:'#94a3b8' };
 const chip = (s) => `<span class="chip" style="background:${STATUS_COLOR[s]}22;color:${STATUS_COLOR[s]}">${STATUS_VI[s]||s}</span>`;
+// Job hẹn giờ chưa tới hạn -> hiện "⏰ Hẹn chạy lúc ..."
+const hen = (j) => {
+  if (!j || j.status !== 'queued' || !j.run_at) return '';
+  const t = new Date(j.run_at);
+  if (isNaN(t) || t <= new Date()) return '';
+  const p = n => String(n).padStart(2, '0');
+  return `⏰ Hẹn chạy lúc ${p(t.getHours())}:${p(t.getMinutes())} ngày ${p(t.getDate())}/${p(t.getMonth()+1)}`;
+};
 
 let view = { name:'home', jobId:null, wf:null };
 let WF = [];            // danh sách workflow (từ /api/workflows)
@@ -92,6 +102,8 @@ async function renderHome(s, jobs) {
   if (!s) s = await api('/api/system/status');
   if (!jobs) jobs = await api('/api/jobs');
   if (!WF.length) WF = await api('/api/workflows');
+  const verEl = document.getElementById('ver');
+  if (verEl && s.version) verEl.textContent = s.version;
   app.innerHTML = '';
   let bColor = s.currentJob ? '#eaf2ff' : (s.browserOk ? '#eafaf0' : '#fff4e6');
   let bText = s.currentJob ? `🔵 Đang xử lý: ${s.currentJob.patient_name||''} — ${s.currentJob.current_step||''}`
@@ -120,7 +132,7 @@ async function renderHome(s, jobs) {
   const jl = list.querySelector('#jl');
   if (!jobs.length) jl.innerHTML = '<div class="muted">Chưa có job nào.</div>';
   jobs.slice(0,8).forEach(j => {
-    const el = $(`<div class="job"><div><div><b>#${j.id}</b> ${j.patient_name||''}</div><div class="muted">${j.current_step||''}</div></div>${chip(j.status)}</div>`);
+    const el = $(`<div class="job"><div><div><b>#${j.id}</b> ${j.patient_name||''}</div><div class="muted">${hen(j) || j.current_step||''}</div></div>${chip(j.status)}</div>`);
     el.onclick = () => render('job', j.id);
     jl.appendChild(el);
   });
@@ -179,6 +191,16 @@ function renderField(fbox, f, state) {
       chip.onclick = () => { state[f.key] = opt; chips.forEach(c => c.classList.toggle('on', c === chip)); };
       chips.push(chip); row.appendChild(chip);
     });
+    fbox.appendChild(wrap);
+  } else if (f.type === 'checkbox') {
+    // Ô tick (vd "Hẹn giờ chạy"). Mặc định theo f.default.
+    state[f.key] = !!f.default;
+    const wrap = $(`<div style="margin:10px 0 14px">
+      <label style="display:flex;align-items:center;gap:10px;font-weight:600;cursor:pointer">
+        <input type="checkbox" style="width:22px;height:22px" ${f.default ? 'checked' : ''} />
+        <span>${f.label}</span></label></div>`);
+    const inp = wrap.querySelector('input');
+    inp.onchange = () => { state[f.key] = inp.checked; };
     fbox.appendChild(wrap);
   } else if (f.type === 'time') {
     const def = f.default || '08:00:00';
@@ -312,7 +334,7 @@ async function renderBatch(mine) {
   app.appendChild(c);
   const bl = c.querySelector('#bl');
   mine.forEach((j, i) => {
-    const el = $(`<div class="job"><div><div><b>${i + 1}. #${j.id}</b> ${j.patient_name || ''}</div><div class="muted">${j.current_step || ''}</div></div>${chip(j.status)}</div>`);
+    const el = $(`<div class="job"><div><div><b>${i + 1}. #${j.id}</b> ${j.patient_name || ''}</div><div class="muted">${hen(j) || j.current_step || ''}</div></div>${chip(j.status)}</div>`);
     el.onclick = () => render('job', j.id);
     bl.appendChild(el);
   });
@@ -368,6 +390,8 @@ async function poll() {
       const jobs = await api('/api/jobs');
       const dot = document.getElementById('sysDot');
       if (dot) dot.textContent = s.currentJob ? '🔵 đang chạy' : (s.browserOk ? '🟢' : '🟠');
+      const ver = document.getElementById('ver');
+      if (ver && s.version) ver.textContent = s.version;
       const sig = JSON.stringify([s.browserOk, s.queueLength, s.currentJob, jobs.slice(0,8).map(j => [j.id, j.status, j.current_step])]);
       if (sig !== pollSig) { pollSig = sig; renderHome(s, jobs); }
     } else if (view.name === 'job' && view.jobId) {

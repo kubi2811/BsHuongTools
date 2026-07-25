@@ -1,6 +1,6 @@
 {
   "name": "hisbot",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Trợ lý nhập liệu HIS - BV Từ Dữ (demo luồng 1: chích vaccine)",
   "type": "module",

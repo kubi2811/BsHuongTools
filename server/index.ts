@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import { config, ROOT } from '../src/config.js';
 import { ensureLoggedIn } from '../src/login.js';
@@ -16,6 +17,19 @@ import { chayLuong6 } from '../src/luong6.js';
 import { chayLuong7, VACCINE_L7, type VaccineL7 } from '../src/luong7.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ---------- Phiên bản (hiện trên giao diện để biết máy đang chạy bản nào) ----------
+// = version trong package.json + ngày commit mới nhất (nếu máy có git).
+const VERSION = (() => {
+  let v = '?';
+  try { v = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version || '?'; } catch { /* bỏ qua */ }
+  let ngay = '';
+  try {
+    ngay = execSync('git log -1 --format=%cd --date=format:%d/%m/%Y', { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+  } catch { /* không có git hoặc không phải repo */ }
+  return ngay ? `v${v} (${ngay})` : `v${v}`;
+})();
 
 // ---------- DB ----------
 fs.mkdirSync(path.join(ROOT, 'data'), { recursive: true });
@@ -47,6 +61,10 @@ CREATE TABLE IF NOT EXISTS job_logs (
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_logs_job ON job_logs(job_id);
 `);
+
+// Migration: cột run_at = mốc HẸN GIỜ (ISO). NULL/quá khứ = chạy ngay.
+// DB cũ chưa có cột này -> thêm; đã có thì bỏ qua lỗi "duplicate column".
+try { db.exec(`ALTER TABLE jobs ADD COLUMN run_at TEXT`); } catch { /* đã có cột */ }
 
 // Job đang chạy dở lúc server tắt -> đánh dấu failed (không tự resume, tránh double-submit)
 db.prepare(`UPDATE jobs SET status='failed', error='Gián đoạn giữa chừng (server restart)' WHERE status IN ('running','waiting_confirm')`).run();
@@ -84,6 +102,9 @@ const WORKFLOWS = [
       { key: 'ngay', label: 'Ngày y lệnh', type: 'text', required: true },
       { key: 'gio', label: 'Giờ y lệnh', type: 'time', default: '08:00:00', required: true },
       { key: 'vaccines', label: 'Vaccine (tự chọn)', type: 'multiselect', options: ['BCG', 'VGB'], required: true },
+      // Hẹn giờ: mặc định TICK, chạy lúc 06:00 của NGÀY Y LỆNH. Bỏ tick = chạy ngay.
+      { key: 'henGio', label: 'Hẹn giờ chạy (bỏ tick = chạy ngay)', type: 'checkbox', default: true },
+      { key: 'gioHen', label: 'Giờ hẹn chạy', type: 'time', default: '06:00:00' },
     ],
   },
   {
@@ -180,8 +201,20 @@ const bm = new BrowserManager();
 const pendingConfirms = new Map<number, (ok: boolean) => void>();
 let running = false;
 
+// Job kế tiếp: bỏ qua job HẸN GIỜ chưa tới hạn (run_at > bây giờ).
 function nextQueued(): { id: number } | undefined {
-  return db.prepare(`SELECT id FROM jobs WHERE status='queued' ORDER BY id ASC LIMIT 1`).get() as any;
+  return db.prepare(
+    `SELECT id FROM jobs WHERE status='queued' AND (run_at IS NULL OR run_at <= ?) ORDER BY id ASC LIMIT 1`
+  ).get(nowVN()) as any;
+}
+
+// Đổi "DD/MM/YYYY" + "HH:mm[:ss]" -> mốc ISO theo giờ máy. Trả '' nếu không hợp lệ.
+function mocHenGio(ngay: string, gio: string): string {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((ngay || '').trim());
+  if (!m) return '';
+  const [hh, mm] = (gio || '06:00').split(':').map((x) => Number(x) || 0);
+  const t = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]), hh, mm, 0, 0);
+  return isNaN(t.getTime()) ? '' : t.toISOString();
 }
 
 async function processQueue(): Promise<void> {
@@ -285,14 +318,21 @@ app.get('/api/workflows', requireAuth, (_req, res) => res.json(WORKFLOWS));
 app.post('/api/jobs', requireAuth, (req, res) => {
   const { workflowId, data } = req.body || {};
   if (!workflowId || !data) return res.status(400).json({ error: 'Thiếu dữ liệu' });
-  const info = db.prepare(`INSERT INTO jobs(workflow_id, data_json, patient_name, status, created_at) VALUES(?,?,?, 'queued', ?)`)
-    .run(workflowId, JSON.stringify(data), data.hoTen || (data.maBA ? 'Mã BA ' + data.maBA : null), nowVN());
+  // HẸN GIỜ: tick "henGio" -> treo tới ngày y lệnh + giờ hẹn mới chạy.
+  // Nếu mốc đó đã qua (vd hẹn 06:00 nhưng bấm lúc 10h cùng ngày) -> chạy ngay, không treo vô ích.
+  let runAt: string | null = null;
+  if (data.henGio) {
+    const moc = mocHenGio(data.ngay, data.gioHen || '06:00');
+    if (moc && moc > nowVN()) runAt = moc;
+  }
+  const info = db.prepare(`INSERT INTO jobs(workflow_id, data_json, patient_name, status, created_at, run_at) VALUES(?,?,?, 'queued', ?, ?)`)
+    .run(workflowId, JSON.stringify(data), data.hoTen || (data.maBA ? 'Mã BA ' + data.maBA : null), nowVN(), runAt);
   setTimeout(processQueue, 100);
-  res.json({ id: info.lastInsertRowid });
+  res.json({ id: info.lastInsertRowid, runAt });
 });
 
 app.get('/api/jobs', requireAuth, (_req, res) => {
-  const rows = db.prepare(`SELECT id, workflow_id, patient_name, status, current_step, error, created_at, finished_at FROM jobs ORDER BY id DESC LIMIT 50`).all();
+  const rows = db.prepare(`SELECT id, workflow_id, patient_name, status, current_step, error, created_at, finished_at, run_at FROM jobs ORDER BY id DESC LIMIT 50`).all();
   res.json(rows);
 });
 
@@ -328,7 +368,7 @@ app.get('/api/system/status', requireAuth, async (_req, res) => {
   const s = await bm.status();
   const queued = (db.prepare(`SELECT COUNT(*) c FROM jobs WHERE status='queued'`).get() as any).c;
   const cur = db.prepare(`SELECT id, patient_name, current_step FROM jobs WHERE status IN ('running','waiting_confirm') ORDER BY id DESC LIMIT 1`).get();
-  res.json({ ...s, queueLength: queued, currentJob: cur || null });
+  res.json({ ...s, queueLength: queued, currentJob: cur || null, version: VERSION });
 });
 
 app.post('/api/system/open-browser', requireAuth, async (_req, res) => {
@@ -355,9 +395,12 @@ const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, () => {
   console.log(`\n🚀 Trợ lý nhập liệu HIS đang chạy: http://localhost:${PORT}`);
   console.log(`   PIN đăng nhập UI: ${config.pin}`);
+  console.log(`   Phiên bản: ${VERSION}`);
   // Dọn ảnh cũ lúc khởi động + mỗi 6 giờ (ảnh chứa dữ liệu bệnh nhân)
   donAnhCu();
   setInterval(donAnhCu, 6 * 3600 * 1000);
+  // Nhịp kiểm tra job HẸN GIỜ: cứ 30 giây xem có job nào tới hạn thì chạy.
+  setInterval(processQueue, 30 * 1000);
   // Chạy tiếp job còn trong hàng đợi (nếu có)
   processQueue();
 });
