@@ -78,7 +78,8 @@ export async function moBenhNhanTheoMaBA(page: Page, maBA: string): Promise<void
 
 // 1 "bộ chỉ định" (toa có sẵn trong HIS). Chọn toa -> HIS tự nạp thuốc; ta chỉ chỉnh "Số ngày".
 export interface Toa {
-  boChiDinh: RegExp;                       // text option trong dropdown "Chọn bộ chỉ định"
+  boChiDinh: RegExp;                       // regex khớp option trong dropdown "Chọn bộ chỉ định"
+  tenGo: string;                           // TÊN ĐẦY ĐỦ để GÕ vào ô tìm (danh sách dài, không gõ thì không lọc ra)
   nguon: 'kho' | 'nha-thuoc';              // toa nằm ở nguồn Kho hay Nhà thuốc
   soNgay: { match: RegExp; ngay: string }[]; // chỉnh "Số ngày" của thuốc khớp `match`
 }
@@ -86,27 +87,27 @@ export interface Toa {
 // Tên hiển thị (chip UI) -> định nghĩa toa. (option thật trong HIS đều chữ thường "toa ... MH")
 export const TOA: Record<string, Toa> = {
   'Enpovid': {
-    boChiDinh: /toa enpovid MH/i, nguon: 'kho',
+    boChiDinh: /toa enpovid MH/i, tenGo: 'toa enpovid MH', nguon: 'kho',
     soNgay: [{ match: /enpovid/i, ngay: '5' }, { match: /phytogyno|vệ sinh/i, ngay: '1' }],
   },
   'Orenko': {
-    boChiDinh: /toa orenko MH/i, nguon: 'kho',
+    boChiDinh: /toa orenko MH/i, tenGo: 'toa orenko MH', nguon: 'kho',
     soNgay: [{ match: /orenko/i, ngay: '5' }, { match: /enpovid/i, ngay: '5' }, { match: /phytogyno|vệ sinh/i, ngay: '1' }],
   },
   'Curam': {
-    boChiDinh: /toa curam MH/i, nguon: 'kho',
+    boChiDinh: /toa curam MH/i, tenGo: 'toa curam MH', nguon: 'kho',
     soNgay: [{ match: /curam/i, ngay: '5' }, { match: /enpovid/i, ngay: '5' }, { match: /phytogyno|vệ sinh/i, ngay: '1' }],
   },
   'Cefa': {
-    boChiDinh: /toa cefa MH/i, nguon: 'kho',
+    boChiDinh: /toa cefa MH/i, tenGo: 'toa cefa MH', nguon: 'kho',
     soNgay: [{ match: /cefa/i, ngay: '3' }, { match: /enpovid/i, ngay: '5' }, { match: /phytogyno|vệ sinh/i, ngay: '1' }],
   },
   'Next': {
-    boChiDinh: /toa next MH/i, nguon: 'nha-thuoc',
+    boChiDinh: /toa next MH/i, tenGo: 'toa next MH', nguon: 'nha-thuoc',
     soNgay: [{ match: /next.*cal|g\s*cal/i, ngay: '30' }, { match: /felnosat/i, ngay: '30' }],
   },
   'Next + Gema 0,4': {
-    boChiDinh: /toa next gema 0[,.]4 MH/i, nguon: 'nha-thuoc',
+    boChiDinh: /toa next gema 0[,.]4 MH/i, tenGo: 'toa next gema 0,4 MH', nguon: 'nha-thuoc',
     soNgay: [
       { match: /next.*cal|g\s*cal/i, ngay: '30' },
       { match: /felnosat/i, ngay: '30' },
@@ -114,7 +115,7 @@ export const TOA: Record<string, Toa> = {
     ],
   },
   'Cefimed': {
-    boChiDinh: /toa cefimed MH/i, nguon: 'nha-thuoc',
+    boChiDinh: /toa cefimed MH/i, tenGo: 'toa cefimed MH', nguon: 'nha-thuoc',
     soNgay: [
       { match: /next.*cal|g\s*cal/i, ngay: '30' },
       { match: /felnosat/i, ngay: '30' },
@@ -246,26 +247,58 @@ export async function chonBoChiDinh(page: Page, toaKeys: string[]): Promise<void
       daDoiNhaThuoc = true;
     }
 
-    await step(page, `Chọn bộ chỉ định: ${key}`, async () => {
-      // Mở dropdown "Chọn bộ chỉ định" và chọn đúng toa
-      const boSel = dialog.locator('.ant-select').filter({ hasText: /bộ chỉ định/i })
-        .or(dialog.getByText(/Chọn bộ chỉ định/i).locator('xpath=ancestor::*[contains(@class,"ant-select")][1]')).first();
+    await step(page, `Chọn bộ chỉ định: ${key} ("${def!.tenGo}")`, async () => {
+      // Mở dropdown "Chọn bộ chỉ định".
+      // QUAN TRỌNG: danh sách bộ chỉ định RẤT DÀI và ảo hoá -> toa cần tìm thường KHÔNG nằm
+      // trong phần đang hiển thị. Phải GÕ ĐẦY ĐỦ tên toa (vd "toa curam MH") để lọc, y như
+      // bác sĩ làm tay; chỉ mở dropdown rồi tìm option là hay timeout "không thấy option".
+      // Tìm ô bộ chỉ định BỀN: lúc chưa chọn nó hiện chữ "Chọn bộ chỉ định", nhưng SAU KHI đã
+      // chọn 1 toa thì nó hiện tên toa đó ("toa curam MH") -> tìm theo cả 2 khả năng, nếu không
+      // toa thứ hai sẽ không tìm thấy ô và báo timeout.
+      const boSel = dialog.locator('.ant-select').filter({ hasText: /bộ chỉ định|toa\s.*MH/i }).first();
       await boSel.scrollIntoViewIfNeeded();
       await boSel.click();
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(600);
+
+      // Gõ SẠCH tên đầy đủ vào ô tìm của dropdown (xoá chữ còn sót từ lần chọn trước)
+      const oTim = boSel.locator('input').first();
+      await oTim.fill('');
+      await oTim.pressSequentially(def!.tenGo, { delay: 35 });
+      await page.waitForTimeout(1200);
+
       const opt = page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')
         .filter({ hasText: def!.boChiDinh }).first();
-      await opt.waitFor({ state: 'visible', timeout: 8000 });
+      await opt.waitFor({ state: 'visible', timeout: 10000 });
       await opt.click();
       await page.waitForTimeout(2000);
       // Cảnh báo "thuốc đã được chỉ định..." -> Xác nhận
       await xacNhanPopupNeuCo(page, 1500);
       await page.waitForTimeout(1500);
-      // Chờ thuốc ĐẦU TIÊN của toa render ra bảng Đã chọn (có ô nhập) trước khi chỉnh số ngày
-      await dialog.locator('tr.ant-table-row')
-        .filter({ hasText: def!.soNgay[0].match })
-        .filter({ has: page.locator('input:not([type="checkbox"])') })
-        .first().waitFor({ state: 'visible', timeout: 15000 });
+
+      // Dòng trong bảng "Đã chọn" = dòng CÓ ô nhập (số ngày/số lượng), khác bảng danh sách bên trái.
+      const dongDaChon = (m: RegExp) => dialog.locator('tr.ant-table-row')
+        .filter({ hasText: m })
+        .filter({ has: page.locator('input:not([type="checkbox"])') });
+
+      // Toa THUỐC KHO: chọn bộ chỉ định là HIS tự tick thuốc vào "Đã chọn".
+      // Toa THUỐC NHÀ THUỐC: HIS CHỈ LỌC danh sách bên trái, KHÔNG tự tick -> phải tự tick.
+      if (!(await dongDaChon(def!.soNgay[0].match).count())) {
+        for (const sn of def!.soNgay) {
+          const dongTrai = dialog.locator('tr.ant-table-row')
+            .filter({ hasText: sn.match })
+            .filter({ hasNot: page.locator('input:not([type="checkbox"])') })
+            .first();
+          if (!(await dongTrai.count())) continue;
+          await dongTrai.scrollIntoViewIfNeeded();
+          await dongTrai.locator('.ant-checkbox-wrapper, input[type="checkbox"]').first().click();
+          await page.waitForTimeout(900);
+          await xacNhanPopupNeuCo(page, 1000); // "Tiếp tục chỉ định thêm?" nếu thuốc đã kê nơi khác
+        }
+        await page.waitForTimeout(1200);
+      }
+
+      // Chờ thuốc ĐẦU TIÊN của toa có mặt trong bảng Đã chọn trước khi chỉnh số ngày
+      await dongDaChon(def!.soNgay[0].match).first().waitFor({ state: 'visible', timeout: 15000 });
     }, { retries: 2 });
 
     // Chỉnh "Số ngày" cho từng thuốc trong toa (khớp theo tên thuốc, điền theo tiêu đề cột)
