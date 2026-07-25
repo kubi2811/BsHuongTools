@@ -68,6 +68,7 @@ let formState = {};     // giá trị đang nhập của form hiện tại
 let pickSel = [];       // các luồng đã chọn để chạy batch (theo thứ tự)
 let batchIds = [];      // id các job vừa tạo trong 1 batch
 let batchStates = [];   // dữ liệu RIÊNG của từng luồng trong batch
+let trangJob = 0;       // trang đang xem ở "Lịch sử chạy" (5 ca/trang)
 
 async function render(name, arg) {
   view = { name, jobId: name==='job' ? arg : view.jobId, wf: name==='form' ? arg : view.wf };
@@ -127,15 +128,53 @@ async function renderHome(s, jobs) {
   g.querySelector('#open').onclick = async () => { g.querySelector('#open').textContent='Đang mở...'; await api('/api/system/open-browser',{method:'POST'}); renderHome(); };
   g.querySelector('#restart').onclick = async () => { await api('/api/system/restart-browser',{method:'POST'}); renderHome(); };
 
-  const list = $(`<div class="card"><h2>Job gần đây</h2><div id="jl"></div></div>`);
+  // ---- Lịch sử chạy: 5 ca / trang, có nút chuyển trang ----
+  const SO_MOI_TRANG = 5;
+  const tongTrang = Math.max(1, Math.ceil(jobs.length / SO_MOI_TRANG));
+  if (trangJob >= tongTrang) trangJob = tongTrang - 1; // xóa bớt ca -> lùi trang cho hợp lệ
+
+  const list = $(`<div class="card"><h2>Lịch sử chạy</h2><div id="jl"></div>
+    <div id="pager" style="margin-top:12px;display:flex;align-items:center;gap:10px"></div></div>`);
   app.appendChild(list);
   const jl = list.querySelector('#jl');
-  if (!jobs.length) jl.innerHTML = '<div class="muted">Chưa có job nào.</div>';
-  jobs.slice(0,8).forEach(j => {
-    const el = $(`<div class="job"><div><div><b>#${j.id}</b> ${j.patient_name||''}</div><div class="muted">${hen(j) || j.current_step||''}</div></div>${chip(j.status)}</div>`);
-    el.onclick = () => render('job', j.id);
-    jl.appendChild(el);
-  });
+  if (!jobs.length) {
+    jl.innerHTML = '<div class="muted">Chưa có ca nào.</div>';
+  } else {
+    jobs.slice(trangJob * SO_MOI_TRANG, (trangJob + 1) * SO_MOI_TRANG).forEach(j => {
+      const el = $(`<div class="job"><div style="flex:1"><div><b>#${j.id}</b> ${j.patient_name||''}</div>
+        <div class="muted">${hen(j) || j.current_step||''}</div></div>
+        <div style="display:flex;align-items:center;gap:8px">${chip(j.status)}<span class="xoa"></span></div></div>`);
+      el.querySelector('div').onclick = () => render('job', j.id);
+      // Ca đang chạy / đang chờ -> cho hủy ngay tại đây
+      if (['queued','running','waiting_confirm'].includes(j.status)) {
+        const x = $(`<button title="Hủy ca này" style="width:auto;padding:6px 10px;font-size:13px;background:#fee2e2;color:var(--err)">✕ Hủy</button>`);
+        x.onclick = async (e) => {
+          e.stopPropagation();
+          const dangChay = j.status === 'running';
+          const hoi = dangChay
+            ? `Hủy ca #${j.id} ĐANG CHẠY?\n\nCửa sổ Edge sẽ đóng ngay. Những gì bot ĐÃ lưu lên HIS trước đó vẫn còn — bác sĩ tự kiểm tra lại hồ sơ.`
+            : `Hủy ca #${j.id} đang chờ?`;
+          if (!confirm(hoi)) return;
+          x.textContent = '...';
+          await api('/api/jobs/'+j.id+'/cancel', { method:'POST' });
+          pollSig = ''; renderHome();
+        };
+        el.querySelector('.xoa').replaceWith(x);
+      }
+      jl.appendChild(el);
+    });
+  }
+
+  // Thanh chuyển trang
+  const pg = list.querySelector('#pager');
+  if (tongTrang > 1) {
+    const truoc = $(`<button class="btn-mut" ${trangJob===0?'disabled':''} style="width:auto;flex:0 0 auto;padding:10px 16px">‹ Trước</button>`);
+    const sau  = $(`<button class="btn-mut" ${trangJob>=tongTrang-1?'disabled':''} style="width:auto;flex:0 0 auto;padding:10px 16px">Sau ›</button>`);
+    const giua = $(`<div class="muted" style="flex:1;text-align:center;white-space:nowrap">Trang ${trangJob+1}/${tongTrang} — ${jobs.length} ca</div>`);
+    truoc.onclick = () => { if (trangJob > 0) { trangJob--; pollSig=''; renderHome(); } };
+    sau.onclick   = () => { if (trangJob < tongTrang-1) { trangJob++; pollSig=''; renderHome(); } };
+    pg.appendChild(truoc); pg.appendChild(giua); pg.appendChild(sau);
+  }
 }
 
 // ---- Form tạo job (tự sinh theo manifest của workflow) ----
@@ -392,7 +431,10 @@ async function poll() {
       if (dot) dot.textContent = s.currentJob ? '🔵 đang chạy' : (s.browserOk ? '🟢' : '🟠');
       const ver = document.getElementById('ver');
       if (ver && s.version) ver.textContent = s.version;
-      const sig = JSON.stringify([s.browserOk, s.queueLength, s.currentJob, jobs.slice(0,8).map(j => [j.id, j.status, j.current_step])]);
+      // Chữ ký gồm cả TRANG đang xem + đúng 5 ca của trang đó -> tự làm mới không nhảy trang
+      const tuJ = trangJob * 5;
+      const sig = JSON.stringify([s.browserOk, s.queueLength, s.currentJob, trangJob, jobs.length,
+        jobs.slice(tuJ, tuJ + 5).map(j => [j.id, j.status, j.current_step])]);
       if (sig !== pollSig) { pollSig = sig; renderHome(s, jobs); }
     } else if (view.name === 'job' && view.jobId) {
       const data = await api('/api/jobs/' + view.jobId);

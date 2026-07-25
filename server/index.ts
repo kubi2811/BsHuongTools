@@ -102,8 +102,8 @@ const WORKFLOWS = [
       { key: 'ngay', label: 'Ngày y lệnh', type: 'text', required: true },
       { key: 'gio', label: 'Giờ y lệnh', type: 'time', default: '08:00:00', required: true },
       { key: 'vaccines', label: 'Vaccine (tự chọn)', type: 'multiselect', options: ['BCG', 'VGB'], required: true },
-      // Hẹn giờ: mặc định TICK, chạy lúc 06:00 của NGÀY Y LỆNH. Bỏ tick = chạy ngay.
-      { key: 'henGio', label: 'Hẹn giờ chạy (bỏ tick = chạy ngay)', type: 'checkbox', default: true },
+      // Hẹn giờ: mặc định KHÔNG tick (chạy ngay). Tick vào -> chạy lúc giờ hẹn của NGÀY Y LỆNH.
+      { key: 'henGio', label: 'Hẹn giờ chạy (tick = treo tới giờ hẹn)', type: 'checkbox', default: false },
       { key: 'gioHen', label: 'Giờ hẹn chạy', type: 'time', default: '06:00:00' },
     ],
   },
@@ -214,6 +214,8 @@ const bm = bms[0]; // chỗ chạy chính (dùng cho nút "Mở/Kiểm tra brows
 const pendingConfirms = new Map<number, (ok: boolean) => void>();
 const banRon: boolean[] = [];                       // chỗ chạy nào đang bận
 const benhNhanDangChay = new Map<number, string>(); // jobId -> tên/mã BN đang xử lý
+const slotCuaJob = new Map<number, number>();       // jobId -> chỗ chạy (để hủy được job đang chạy)
+const daYeuCauHuy = new Set<number>();              // jobId bác sĩ bấm hủy giữa chừng
 
 // Job kế tiếp: bỏ qua job HẸN GIỜ chưa tới hạn (run_at > bây giờ) và bỏ qua job của
 // bệnh nhân ĐANG được xử lý ở chỗ chạy khác (tránh 2 cửa sổ cùng thao tác 1 hồ sơ -> trùng tờ).
@@ -244,6 +246,7 @@ async function chayMotJob(slot: number): Promise<void> {
   const job = nextQueued(new Set(benhNhanDangChay.values()));
   if (!job) return;
   banRon[slot] = true;
+  slotCuaJob.set(job.id, slot);
   if (job.patient_name) benhNhanDangChay.set(job.id, job.patient_name);
 
   const row = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(job.id) as any;
@@ -304,11 +307,18 @@ async function chayMotJob(slot: number): Promise<void> {
       db.prepare(`UPDATE jobs SET status='success', finished_at=?, current_step='Hoàn tất' WHERE id=?`).run(nowVN(), job.id);
     }
   } catch (e) {
-    db.prepare(`UPDATE jobs SET status='failed', error=?, finished_at=? WHERE id=?`).run((e as Error).message, nowVN(), job.id);
+    // Bác sĩ bấm HỦY giữa chừng -> đóng browser làm thao tác đang chờ văng lỗi. Đó không phải lỗi thật.
+    if (daYeuCauHuy.has(job.id)) {
+      db.prepare(`UPDATE jobs SET status='canceled', finished_at=?, current_step='Đã hủy giữa chừng' WHERE id=?`).run(nowVN(), job.id);
+    } else {
+      db.prepare(`UPDATE jobs SET status='failed', error=?, finished_at=? WHERE id=?`).run((e as Error).message, nowVN(), job.id);
+    }
   } finally {
     if (ctxJob) setStepReporter(null, ctxJob);
     pendingConfirms.delete(job.id);
     benhNhanDangChay.delete(job.id);
+    slotCuaJob.delete(job.id);
+    daYeuCauHuy.delete(job.id);
     banRon[slot] = false;
     setTimeout(() => void chayMotJob(slot), 500); // chỗ này lấy job kế nếu có
   }
@@ -357,7 +367,7 @@ app.post('/api/jobs', requireAuth, (req, res) => {
 });
 
 app.get('/api/jobs', requireAuth, (_req, res) => {
-  const rows = db.prepare(`SELECT id, workflow_id, patient_name, status, current_step, error, created_at, finished_at, run_at FROM jobs ORDER BY id DESC LIMIT 50`).all();
+  const rows = db.prepare(`SELECT id, workflow_id, patient_name, status, current_step, error, created_at, finished_at, run_at FROM jobs ORDER BY id DESC LIMIT 200`).all();
   res.json(rows);
 });
 
@@ -377,16 +387,33 @@ app.post('/api/jobs/:id/confirm', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/jobs/:id/cancel', requireAuth, (req, res) => {
+// Hủy 1 ca: đang chờ / chờ xác nhận / ĐANG CHẠY đều hủy được.
+// Đang chạy -> đóng cửa sổ Edge của ca đó, thao tác dở dang sẽ dừng ngay.
+app.post('/api/jobs/:id/cancel', requireAuth, async (req, res) => {
   const id = Number(req.params.id);
+  const row = db.prepare(`SELECT status FROM jobs WHERE id=?`).get(id) as any;
+  if (!row) return res.status(404).json({ error: 'Không thấy ca này' });
+
   const resolve = pendingConfirms.get(id);
   if (resolve) {
+    // Đang dừng ở điểm xác nhận -> trả lời "không Lưu"
     db.prepare(`UPDATE jobs SET status='canceled', finished_at=?, current_step='Đã hủy (không Lưu)' WHERE id=?`).run(nowVN(), id);
     resolve(false);
-  } else {
-    db.prepare(`UPDATE jobs SET status='canceled', finished_at=? WHERE id=? AND status='queued'`).run(nowVN(), id);
+    return res.json({ ok: true, kieu: 'diem-xac-nhan' });
   }
-  res.json({ ok: true });
+
+  if (row.status === 'running') {
+    // Đang thao tác trên HIS -> đánh dấu hủy rồi đóng browser để cắt ngang
+    daYeuCauHuy.add(id);
+    db.prepare(`UPDATE jobs SET current_step='Đang hủy...' WHERE id=?`).run(id);
+    const slot = slotCuaJob.get(id);
+    if (slot !== undefined) { try { await bms[slot].restart(); } catch { /* browser đã đóng */ } }
+    return res.json({ ok: true, kieu: 'dang-chay' });
+  }
+
+  // Đang trong hàng đợi (kể cả ca hẹn giờ chưa tới hạn)
+  db.prepare(`UPDATE jobs SET status='canceled', finished_at=?, current_step='Đã hủy' WHERE id=? AND status='queued'`).run(nowVN(), id);
+  res.json({ ok: true, kieu: 'hang-doi' });
 });
 
 app.get('/api/system/status', requireAuth, async (_req, res) => {
