@@ -81,11 +81,25 @@ export async function bamLuu(page: Page): Promise<void> {
   await page.waitForTimeout(1500);
 }
 
-// Hook báo tiến độ để server ghi log + hiển thị lên UI (đặt bởi executor)
+// Hook báo tiến độ để server ghi log + hiển thị lên UI (đặt bởi executor).
+// QUAN TRỌNG khi chạy NHIỀU JOB SONG SONG: reporter phải gắn theo BrowserContext của
+// từng job, không được dùng chung 1 biến toàn cục (log job này sẽ ghi nhầm sang job kia).
+// Khoá theo context (không phải page) vì 1 luồng có thể mở thêm tab (vd luồng 1 mở tab sàng lọc).
 export type StepReport = { name: string; screenshot: string; level: 'info' | 'error'; durationMs: number; error?: string };
-let reporter: ((r: StepReport) => void) | null = null;
-export function setStepReporter(fn: ((r: StepReport) => void) | null): void {
-  reporter = fn;
+type ReportFn = (r: StepReport) => void;
+const reporters = new WeakMap<object, ReportFn>();
+let reporterChung: ReportFn | null = null; // dùng khi chạy 1 job (không truyền ctx)
+
+export function setStepReporter(fn: ReportFn | null, ctx?: object): void {
+  if (ctx) { if (fn) reporters.set(ctx, fn); else reporters.delete(ctx); }
+  else reporterChung = fn;
+}
+
+// Lấy reporter đúng của job đang chạy trên page này.
+function baoCao(page: Page, r: StepReport): void {
+  let fn: ReportFn | undefined;
+  try { fn = reporters.get(page.context()); } catch { /* page đã đóng */ }
+  (fn ?? reporterChung ?? (() => {}))(r);
 }
 
 export interface StepOpts {
@@ -110,7 +124,7 @@ export async function step(page: Page, name: string, fn: () => Promise<void>, op
       }
       const dur = Date.now() - t0;
       console.log(`  ✓ ${name} (${dur}ms)${shotName ? '  📸' : ''}${attempt ? ` [thử lại ${attempt}]` : ''}`);
-      reporter?.({ name, screenshot: shotName, level: 'info', durationMs: dur });
+      baoCao(page, { name, screenshot: shotName, level: 'info', durationMs: dur });
       return;
     } catch (e) {
       if (attempt < retries) {
@@ -123,7 +137,7 @@ export async function step(page: Page, name: string, fn: () => Promise<void>, op
       const html = path.join(config.screenshotDir, `LOI-${Date.now()}-${slug(name)}.html`);
       await fs.promises.writeFile(html, await page.content().catch(() => '')).catch(() => {});
       console.error(`  ✗ ${name}: ${(e as Error).message}  📸 ${path.basename(shot)}`);
-      reporter?.({ name, screenshot: path.basename(shot), level: 'error', durationMs: Date.now() - t0, error: (e as Error).message });
+      baoCao(page, { name, screenshot: path.basename(shot), level: 'error', durationMs: Date.now() - t0, error: (e as Error).message });
       throw e;
     }
   }
@@ -133,7 +147,7 @@ export async function step(page: Page, name: string, fn: () => Promise<void>, op
 export async function checkpoint(page: Page, label: string): Promise<void> {
   const shot = await chupManHinh(page, label);
   console.log(`  📸 ${label}`);
-  reporter?.({ name: '📸 ' + label, screenshot: shot, level: 'info', durationMs: 0 });
+  baoCao(page, { name: '📸 ' + label, screenshot: shot, level: 'info', durationMs: 0 });
 }
 
 // Chụp màn hình đơn lẻ (dùng cho điểm xác nhận), trả về tên file

@@ -164,15 +164,23 @@ const WORKFLOWS = [
 ];
 
 // ---------- Quản lý browser (1 context bền vững, dùng lại) ----------
+// 1 "chỗ chạy" = 1 cửa sổ Edge riêng. Chạy song song thì mỗi chỗ phải có PROFILE RIÊNG
+// (Edge khoá profile, không mở 2 lần cùng thư mục). Slot 0 dùng profile gốc (đã đăng nhập sẵn).
 class BrowserManager {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  constructor(private slot = 0) {}
+
+  private thuMucProfile(): string {
+    return this.slot === 0 ? config.profileDir : `${config.profileDir}-${this.slot + 1}`;
+  }
 
   async getPage(): Promise<Page> {
     if (this.context && this.page && !this.page.isClosed()) return this.page;
-    fs.mkdirSync(config.profileDir, { recursive: true });
+    const dir = this.thuMucProfile();
+    fs.mkdirSync(dir, { recursive: true });
     fs.mkdirSync(config.screenshotDir, { recursive: true });
-    this.context = await chromium.launchPersistentContext(config.profileDir, {
+    this.context = await chromium.launchPersistentContext(dir, {
       channel: 'msedge',
       headless: false,
       viewport: null,
@@ -195,17 +203,25 @@ class BrowserManager {
     return { browserOk, hisLoggedIn: browserOk };
   }
 }
-const bm = new BrowserManager();
+
+// Số job chạy SONG SONG. Mặc định 1 (an toàn tuyệt đối, như trước giờ).
+// Đặt PARALLEL_JOBS=2 hoặc 3 trong .env để chạy nhiều cửa sổ Edge cùng lúc.
+const SO_CHO_CHAY = Math.max(1, Math.min(3, Number(process.env.PARALLEL_JOBS || 1)));
+const bms: BrowserManager[] = Array.from({ length: SO_CHO_CHAY }, (_, i) => new BrowserManager(i));
+const bm = bms[0]; // chỗ chạy chính (dùng cho nút "Mở/Kiểm tra browser")
 
 // ---------- Hàng đợi (concurrency = 1) ----------
 const pendingConfirms = new Map<number, (ok: boolean) => void>();
-let running = false;
+const banRon: boolean[] = [];                       // chỗ chạy nào đang bận
+const benhNhanDangChay = new Map<number, string>(); // jobId -> tên/mã BN đang xử lý
 
-// Job kế tiếp: bỏ qua job HẸN GIỜ chưa tới hạn (run_at > bây giờ).
-function nextQueued(): { id: number } | undefined {
-  return db.prepare(
-    `SELECT id FROM jobs WHERE status='queued' AND (run_at IS NULL OR run_at <= ?) ORDER BY id ASC LIMIT 1`
-  ).get(nowVN()) as any;
+// Job kế tiếp: bỏ qua job HẸN GIỜ chưa tới hạn (run_at > bây giờ) và bỏ qua job của
+// bệnh nhân ĐANG được xử lý ở chỗ chạy khác (tránh 2 cửa sổ cùng thao tác 1 hồ sơ -> trùng tờ).
+function nextQueued(dangChay: Set<string>): { id: number; patient_name: string | null } | undefined {
+  const rows = db.prepare(
+    `SELECT id, patient_name FROM jobs WHERE status='queued' AND (run_at IS NULL OR run_at <= ?) ORDER BY id ASC LIMIT 20`
+  ).all(nowVN()) as any[];
+  return rows.find((r) => !r.patient_name || !dangChay.has(r.patient_name));
 }
 
 // Đổi "DD/MM/YYYY" + "HH:mm[:ss]" -> mốc ISO theo giờ máy. Trả '' nếu không hợp lệ.
@@ -217,25 +233,33 @@ function mocHenGio(ngay: string, gio: string): string {
   return isNaN(t.getTime()) ? '' : t.toISOString();
 }
 
-async function processQueue(): Promise<void> {
-  if (running) return;
-  const job = nextQueued();
+// Gọi khi có job mới / tới giờ hẹn: đánh thức mọi chỗ chạy đang rảnh.
+function processQueue(): void {
+  for (let i = 0; i < SO_CHO_CHAY; i++) if (!banRon[i]) void chayMotJob(i);
+}
+
+// 1 chỗ chạy (slot) lấy 1 job và làm tới khi xong, rồi tự lấy job kế.
+async function chayMotJob(slot: number): Promise<void> {
+  if (banRon[slot]) return;
+  const job = nextQueued(new Set(benhNhanDangChay.values()));
   if (!job) return;
-  running = true;
+  banRon[slot] = true;
+  if (job.patient_name) benhNhanDangChay.set(job.id, job.patient_name);
 
   const row = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(job.id) as any;
   const data = JSON.parse(row.data_json);
   db.prepare(`UPDATE jobs SET status='running', started_at=?, current_step='Bắt đầu' WHERE id=?`).run(nowVN(), job.id);
 
-  // Ghi log từng bước vào DB + cập nhật current_step
-  setStepReporter((r) => {
-    db.prepare(`INSERT INTO job_logs(job_id, step, level, screenshot, duration_ms, at) VALUES(?,?,?,?,?,?)`)
-      .run(job.id, r.name, r.level, r.screenshot, r.durationMs, nowVN());
-    db.prepare(`UPDATE jobs SET current_step=? WHERE id=?`).run(r.name, job.id);
-  });
-
+  let ctxJob: object | undefined;
   try {
-    const page = await bm.getPage();
+    const page = await bms[slot].getPage();
+    ctxJob = page.context();
+    // Ghi log từng bước vào DB. Gắn theo context của job -> chạy song song không lẫn log.
+    setStepReporter((r) => {
+      db.prepare(`INSERT INTO job_logs(job_id, step, level, screenshot, duration_ms, at) VALUES(?,?,?,?,?,?)`)
+        .run(job.id, r.name, r.level, r.screenshot, r.durationMs, nowVN());
+      db.prepare(`UPDATE jobs SET current_step=? WHERE id=?`).run(r.name, job.id);
+    }, ctxJob);
     await ensureLoggedIn(page);
 
     // Điểm xác nhận: chờ bác sĩ bấm Xác nhận/Hủy trên UI
@@ -282,10 +306,11 @@ async function processQueue(): Promise<void> {
   } catch (e) {
     db.prepare(`UPDATE jobs SET status='failed', error=?, finished_at=? WHERE id=?`).run((e as Error).message, nowVN(), job.id);
   } finally {
-    setStepReporter(null);
+    if (ctxJob) setStepReporter(null, ctxJob);
     pendingConfirms.delete(job.id);
-    running = false;
-    setTimeout(processQueue, 500); // chạy job kế nếu có
+    benhNhanDangChay.delete(job.id);
+    banRon[slot] = false;
+    setTimeout(() => void chayMotJob(slot), 500); // chỗ này lấy job kế nếu có
   }
 }
 
@@ -368,7 +393,7 @@ app.get('/api/system/status', requireAuth, async (_req, res) => {
   const s = await bm.status();
   const queued = (db.prepare(`SELECT COUNT(*) c FROM jobs WHERE status='queued'`).get() as any).c;
   const cur = db.prepare(`SELECT id, patient_name, current_step FROM jobs WHERE status IN ('running','waiting_confirm') ORDER BY id DESC LIMIT 1`).get();
-  res.json({ ...s, queueLength: queued, currentJob: cur || null, version: VERSION });
+  res.json({ ...s, queueLength: queued, currentJob: cur || null, version: VERSION, songSong: SO_CHO_CHAY });
 });
 
 app.post('/api/system/open-browser', requireAuth, async (_req, res) => {
