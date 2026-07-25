@@ -1,7 +1,7 @@
 // LUỒNG 4: Đánh toa xuất viện (kê đơn thuốc ra viện) - cơ chế "bộ chỉ định" (toa có sẵn).
 // Chọn toa (Toa enpovid/orenko/curam/next MH) -> HIS tự nạp thuốc -> chỉ chỉnh "Số ngày".
 import { type Page } from 'playwright';
-import { step, checkpoint, nhapSach, dongCanhBaoNeuCo, xacNhanPopupNeuCo } from './helpers.js';
+import { step, checkpoint, nhapSach, dongCanhBaoNeuCo, xacNhanPopupNeuCo, bamLuu } from './helpers.js';
 import { chonKhoaLamViec, setNgayGio, moTrangHIS, resetBoLocTimKiem } from './flow1.js';
 import { docCotBang, dienOTheoCot } from './luong7.js';
 import { config } from './config.js';
@@ -97,9 +97,29 @@ export const TOA: Record<string, Toa> = {
     boChiDinh: /toa curam MH/i, nguon: 'kho',
     soNgay: [{ match: /curam/i, ngay: '5' }, { match: /enpovid/i, ngay: '5' }, { match: /phytogyno|vệ sinh/i, ngay: '1' }],
   },
+  'Cefa': {
+    boChiDinh: /toa cefa MH/i, nguon: 'kho',
+    soNgay: [{ match: /cefa/i, ngay: '3' }, { match: /enpovid/i, ngay: '5' }, { match: /phytogyno|vệ sinh/i, ngay: '1' }],
+  },
   'Next': {
     boChiDinh: /toa next MH/i, nguon: 'nha-thuoc',
     soNgay: [{ match: /next.*cal|g\s*cal/i, ngay: '30' }, { match: /felnosat/i, ngay: '30' }],
+  },
+  'Next + Gema 0,4': {
+    boChiDinh: /toa next gema 0[,.]4 MH/i, nguon: 'nha-thuoc',
+    soNgay: [
+      { match: /next.*cal|g\s*cal/i, ngay: '30' },
+      { match: /felnosat/i, ngay: '30' },
+      { match: /gemapaxane/i, ngay: '6' },
+    ],
+  },
+  'Cefimed': {
+    boChiDinh: /toa cefimed MH/i, nguon: 'nha-thuoc',
+    soNgay: [
+      { match: /next.*cal|g\s*cal/i, ngay: '30' },
+      { match: /felnosat/i, ngay: '30' },
+      { match: /imexime/i, ngay: '5' },
+    ],
   },
 };
 
@@ -158,10 +178,10 @@ export async function taoToDonThuoc(page: Page): Promise<void> {
   });
 }
 
-// Set Ngày y lệnh = ngay + 12:00:00 (giờ auto 12h)
+// Set Ngày y lệnh = ngay + 08:00:00 (theo quy trình bác sĩ)
 export async function setNgayYLenhDonThuoc(page: Page, ngay: string): Promise<void> {
-  await step(page, `Ngày y lệnh = ${ngay} 12:00:00`, async () => {
-    await setNgayGio(page, 'Ngày y lệnh', `${ngay} 12:00:00`);
+  await step(page, `Ngày y lệnh = ${ngay} 08:00:00`, async () => {
+    await setNgayGio(page, 'Ngày y lệnh', `${ngay} 08:00:00`);
   });
 }
 
@@ -271,6 +291,61 @@ export async function chonBoChiDinh(page: Page, toaKeys: string[]): Promise<void
   });
 }
 
+// HIS báo "Thời gian thực hiện DV phải nhỏ hơn thời gian chuyển khoa, ra viện" khi hồ sơ ĐÃ có
+// thời gian ra viện sớm hơn ngày y lệnh của đơn. Trả true nếu đang có thông báo đó.
+async function coLoiThoiGianRaVien(page: Page): Promise<boolean> {
+  const txt = await page.locator('.ant-message, .ant-notification, [class*="toast"]')
+    .allTextContents().catch(() => [] as string[]);
+  return txt.some((t) => /thời gian thực hiện DV phải nhỏ hơn/i.test(t));
+}
+
+// Xóa "Thời gian ra viện" trong Thông tin chung > Tổng kết ra viện, rồi Lưu.
+// (Theo quy trình bác sĩ: gặp lỗi trên thì xóa mốc ra viện đi rồi kê toa lại.)
+export async function xoaThoiGianRaVien(page: Page): Promise<void> {
+  const urlHoSo = page.url().split('?')[0];
+
+  await step(page, 'Mở Thông tin chung > Tổng kết ra viện', async () => {
+    await moTrangHIS(page, urlHoSo + '?tab=0');
+    await page.waitForTimeout(1500);
+    const muc = page.getByText(/Tổng kết ra viện/i).first();
+    await muc.waitFor({ state: 'visible', timeout: 15000 });
+    await muc.scrollIntoViewIfNeeded();
+    // Bấm icon bút chì (sửa) nằm cạnh tiêu đề "Tổng kết ra viện"
+    const khoi = muc.locator('xpath=ancestor::div[contains(@class,"ant-row") or contains(@class,"ant-col")][1]');
+    const but = khoi.locator('.anticon-edit, svg[data-icon="edit"]').first();
+    if (await but.count()) await but.click();
+    else await muc.locator('xpath=following::*[name()="svg"][1]').click();
+    await page.waitForTimeout(1500);
+  }, { retries: 2 });
+
+  await step(page, 'Xóa hết "Thời gian ra viện"', async () => {
+    const o = page.getByText(/Thời gian ra viện/i).first()
+      .locator('xpath=following::input[1]');
+    await o.waitFor({ state: 'visible', timeout: 10000 });
+    // Ô ngày antd hay có nút "x" xóa nhanh; không có thì xóa bằng bàn phím.
+    const wrap = o.locator('xpath=ancestor::div[contains(@class,"ant-picker")][1]');
+    const nutXoa = wrap.locator('.ant-picker-clear').first();
+    if (await nutXoa.count()) {
+      await wrap.hover();
+      await nutXoa.click({ force: true });
+    } else {
+      await o.click();
+      await o.press('Control+a');
+      await o.press('Delete');
+      await page.keyboard.press('Escape').catch(() => {});
+    }
+    await page.waitForTimeout(600);
+    const conLai = ((await o.inputValue().catch(() => '')) || '').trim();
+    if (conLai) throw new Error(`Chưa xóa được "Thời gian ra viện" (còn "${conLai}").`);
+  }, { retries: 2 });
+
+  await step(page, 'Lưu tổng kết ra viện', async () => {
+    await bamLuu(page);
+    await xacNhanPopupNeuCo(page, 1000);
+    await dongCanhBaoNeuCo(page);
+  });
+}
+
 // Lưu đơn thuốc ra viện (nút Lưu góc phải form)
 export async function luuDonThuoc(page: Page): Promise<void> {
   await step(page, 'Bấm Lưu đơn thuốc ra viện', async () => {
@@ -282,7 +357,7 @@ export async function luuDonThuoc(page: Page): Promise<void> {
 // ---- ORCHESTRATOR luồng 4 ----
 export interface Flow4Data {
   maBA: string;
-  ngay: string;    // DD/MM/YYYY (giờ y lệnh auto 12:00:00)
+  ngay: string;    // DD/MM/YYYY (giờ y lệnh auto 08:00:00)
   tuNgay?: string; // "điều trị từ ngày" do user nhập (trống -> Ngày y lệnh + 1)
   toa: string[];   // tên toa user chọn (TOA keys: Enpovid/Orenko/Curam/Next)
 }
@@ -292,11 +367,22 @@ export async function chayLuong4(page: Page, data: Flow4Data): Promise<void> {
   if (!data.toa?.length) throw new Error('Chưa chọn toa (bộ chỉ định) nào.');
 
   await moBenhNhanTheoMaBA(page, data.maBA);
-  await moTabDonThuocRaVien(page);
-  await taoToDonThuoc(page);              // dừng nếu đã có đơn
-  await setNgayYLenhDonThuoc(page, data.ngay);
-  await setSoNgayVaTuNgay(page, data.ngay, data.tuNgay);
-  await chonBoChiDinh(page, data.toa);
+
+  // Kê toa. Nếu HIS báo "Thời gian thực hiện DV phải nhỏ hơn thời gian chuyển khoa, ra viện"
+  // -> xóa Thời gian ra viện ở Tổng kết ra viện rồi kê lại (theo quy trình bác sĩ), thử tối đa 2 lần.
+  for (let lan = 0; lan < 2; lan++) {
+    await moTabDonThuocRaVien(page);
+    await taoToDonThuoc(page);            // có đơn cũ -> xóa rồi tạo lại
+    await setNgayYLenhDonThuoc(page, data.ngay);
+    await setSoNgayVaTuNgay(page, data.ngay, data.tuNgay);
+    await chonBoChiDinh(page, data.toa);
+
+    if (!(await coLoiThoiGianRaVien(page))) break;
+    if (lan === 1) throw new Error('Vẫn báo "Thời gian thực hiện DV phải nhỏ hơn thời gian ra viện" sau khi đã xóa thời gian ra viện. Dừng an toàn.');
+    console.log('  ⚠️  HIS báo lỗi thời gian ra viện -> xóa Thời gian ra viện rồi kê toa lại.');
+    await xoaThoiGianRaVien(page);
+  }
+
   await checkpoint(page, 'Đơn thuốc trước khi Lưu');
   if (process.env.L4_STOP_BEFORE_LUU === '1') {
     throw new Error('DEBUG: dừng trước Lưu (L4_STOP_BEFORE_LUU=1). Đơn CHƯA được Lưu.');
