@@ -225,8 +225,27 @@ async function doiNguon(page: Page, dialog: ReturnType<Page['getByRole']>, nhaTh
 }
 
 // Chọn các "bộ chỉ định" (toa) trong hộp thoại "Chỉ định thuốc" rồi chỉnh Số ngày, Đồng ý.
+// Kê toa theo TỪNG NGUỒN, mỗi nguồn 1 lượt riêng: F2 -> chọn nguồn -> chọn toa -> Đồng ý.
+// Theo yêu cầu bác sĩ: làm xong thuốc NHÀ THUỐC (Đồng ý), rồi F2 lại làm thuốc KHO (Đồng ý),
+// thay vì gộp cả hai vào 1 lần Đồng ý. Kết quả trên đơn như nhau.
 export async function chonBoChiDinh(page: Page, toaKeys: string[]): Promise<void> {
-  await step(page, 'Mở hộp thoại chọn thuốc [F2]', async () => {
+  const toas = toaKeys.map((k) => ({ key: k, def: TOA[k] })).filter((t) => t.def);
+  const nhaThuoc = toas.filter((t) => t.def!.nguon === 'nha-thuoc');
+  const kho = toas.filter((t) => t.def!.nguon === 'kho');
+
+  if (nhaThuoc.length) await keToaMotNguon(page, 'nha-thuoc', nhaThuoc);
+  if (kho.length) await keToaMotNguon(page, 'kho', kho);
+}
+
+// 1 lượt: mở F2 -> (đổi nguồn nếu là nhà thuốc) -> chọn từng toa + điền số ngày -> Đồng ý.
+async function keToaMotNguon(
+  page: Page,
+  nguon: 'kho' | 'nha-thuoc',
+  danhSach: { key: string; def: Toa | undefined }[]
+): Promise<void> {
+  const tenNguon = nguon === 'kho' ? 'Thuốc kho' : 'Thuốc nhà thuốc';
+
+  await step(page, `Mở hộp thoại chọn thuốc [F2] - ${tenNguon}`, async () => {
     await page.getByPlaceholder(/Chọn thuốc/i).first().click();
     await page.getByRole('dialog').filter({ hasText: /Chỉ định thuốc/i }).waitFor({ state: 'visible', timeout: 15000 });
     await page.waitForTimeout(1000);
@@ -234,19 +253,13 @@ export async function chonBoChiDinh(page: Page, toaKeys: string[]): Promise<void
 
   const dialog = page.getByRole('dialog').filter({ hasText: /Chỉ định thuốc/i });
 
-  // Toa KHO trước, rồi toa NHÀ THUỐC (đổi nguồn 1 lần).
-  const toas = toaKeys.map((k) => ({ key: k, def: TOA[k] })).filter((t) => t.def);
-  const sapXep = [...toas].sort((a, b) => (a.def!.nguon === 'kho' ? 0 : 1) - (b.def!.nguon === 'kho' ? 0 : 1));
-  let daDoiNhaThuoc = false;
+  if (nguon === 'nha-thuoc') {
+    await step(page, 'Đổi nguồn "Thuốc nhà thuốc"', async () => {
+      await doiNguon(page, dialog, true);
+    }, { retries: 2 });
+  }
 
-  for (const { key, def } of sapXep) {
-    if (def!.nguon === 'nha-thuoc' && !daDoiNhaThuoc) {
-      await step(page, 'Đổi nguồn "Thuốc nhà thuốc"', async () => {
-        await doiNguon(page, dialog, true);
-      }, { retries: 2 });
-      daDoiNhaThuoc = true;
-    }
-
+  for (const { key, def } of danhSach) {
     await step(page, `Chọn bộ chỉ định: ${key} ("${def!.tenGo}")`, async () => {
       // Mở dropdown "Chọn bộ chỉ định".
       // QUAN TRỌNG: danh sách bộ chỉ định RẤT DÀI và ảo hoá -> toa cần tìm thường KHÔNG nằm
@@ -316,11 +329,14 @@ export async function chonBoChiDinh(page: Page, toaKeys: string[]): Promise<void
     }
   }
 
-  await step(page, 'Bấm Đồng ý [F4] (đưa thuốc vào đơn)', async () => {
+  await step(page, `Bấm Đồng ý [F4] - ${tenNguon}`, async () => {
     await dialog.getByRole('button', { name: /Đồng ý/i }).first().click();
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(2500);
     await xacNhanPopupNeuCo(page, 800);
     await dongCanhBaoNeuCo(page);
+    // Chờ hộp thoại đóng hẳn trước khi mở F2 lượt sau (không thì click hụt)
+    await dialog.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(800);
   });
 }
 
@@ -415,6 +431,10 @@ export async function chayLuong4(page: Page, data: Flow4Data): Promise<void> {
     await xoaThoiGianRaVien(page);
   }
 
+  // Cuộn xuống danh sách thuốc rồi mới chụp -> ảnh kiểm tra thấy rõ thuốc đã vào đơn
+  await page.getByText(/ĐƠN NHÀ THUỐC|THUỐC TỦ TRỰC/i).first()
+    .scrollIntoViewIfNeeded().catch(() => {});
+  await page.waitForTimeout(800);
   await checkpoint(page, 'Đơn thuốc trước khi Lưu');
   if (process.env.L4_STOP_BEFORE_LUU === '1') {
     throw new Error('DEBUG: dừng trước Lưu (L4_STOP_BEFORE_LUU=1). Đơn CHƯA được Lưu.');
