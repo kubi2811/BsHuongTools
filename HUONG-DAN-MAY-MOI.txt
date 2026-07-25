@@ -1,62 +1,81 @@
 ========================================================================
-  TRO LY NHAP LIEU HIS - HUONG DAN CHAY TREN MAY MOI
+  TRO LY NHAP LIEU HIS - HUONG DAN CAI TREN MAY MOI
 ========================================================================
 
 CAN GI TREN MAY MOI
 ------------------------------------------------------------------------
 1. Windows 10/11
-2. Microsoft Edge   (Windows co san - bot chay bang Edge)
-3. Node.js ban LTS  -> https://nodejs.org
-   (May goc dung Node v24. Cai ban khac cung duoc, script se tu cai lai
-    thu vien - luc do CAN INTERNET mot lan.)
-4. Cung mang LAN benh vien (de vao duoc https://bvtudu.tudu.com.vn)
+2. Microsoft Edge      (Windows co san - bot chay bang Edge)
+3. Node.js ban LTS     -> https://nodejs.org
+   (Neu chua co, file CHAY-HIS.bat se TU CAI - can Internet)
+4. Git                 -> https://git-scm.com/download/win
+5. Cung mang LAN benh vien (de vao duoc HIS)
 
 
-CACH NHANH NHAT - 1 CLICK
+CACH CAI - CHI 3 BUOC
 ------------------------------------------------------------------------
-B1. Giai nen zip ra o dia, vi du:  D:BSHuongTool
-B2. Bam dup file:  CHAY-HIS.bat     <-- CHI CAN FILE NAY
-    -> Tu kiem tra + TU CAI Node.js neu may chua co (can Internet lan dau)
-    -> Tu cai thu vien neu thieu
-    -> Tu chay bot luon
+B1. Mo Command Prompt (cmd), go 2 dong sau:
+
+      d:
+      git clone https://github.com/kubi2811/BsHuongTools BSHuongTool
+
+    (Se tao thu muc  D:\BSHuongTool)
+
+B2. Vao D:\BSHuongTool  ->  bam dup file:  CHAY-HIS.bat
+
+    Lan dau se hoi:
+      - Tai khoan HIS
+      - Mat khau HIS
+      - Khoa lam viec  (Enter = Khoa San N2)
+      - Ma PIN vao web (Enter = 1234)
+    Nhap xong no tu luu va chay luon.
+
 B3. Mo trinh duyet:
-    - Ngay tren may nay :  http://localhost:3000
-    - Tu dien thoai      :  http://<IP-may-tinh>:3000
-      (IP hien san trong cua so den luc khoi dong)
-    - Ma PIN: xem trong file .env  (mac dinh 1234)
+      - Ngay tren may nay :  http://localhost:3000
+      - Tu dien thoai      :  http://<IP-may-tinh>:3000
+        (IP hien san trong cua so den luc khoi dong)
+
+
+NHUNG LAN SAU
+------------------------------------------------------------------------
+Chi can bam dup  CHAY-HIS.bat.
+Moi lan chay no TU DONG tai ban moi nhat tu GitHub -> luon dung ban moi.
+Phien ban dang chay hien o goc tren trai giao dien web (vd "v1.0.0 (25/07/2026)").
 
 
 MUON BOT TU CHAY 24/7 (khong can bam gi)
 ------------------------------------------------------------------------
 Chuot phai  scripts\thiet-lap-24-7.bat  -> "Run as administrator"
-Script se:
   - Chan Windows Update tu khoi dong lai giua chung
   - Khong sleep khi cam dien, gap man hinh van chay
   - Tu chay bot moi khi dang nhap Windows
 Sau do khoi dong lai may 1 lan.
 
 
+CHAY NHIEU CA CUNG LUC (tuy chon)
+------------------------------------------------------------------------
+Mac dinh bot chay 1 ca mot luc (an toan nhat).
+Muon chay 2-3 ca song song (nhanh hon khi hen gio nhieu ca cung 6h sang):
+  mo file .env, them dong:     PARALLEL_JOBS=2
+Bot se mo 2 cua so Edge chay song song.
+LUU Y: 2 ca CUNG MOT benh nhan van chay lan luot (tranh trung tho dieu tri).
+
+
 LUU Y QUAN TRONG
 ------------------------------------------------------------------------
 * File .env chua TAI KHOAN + MAT KHAU HIS va ma PIN.
-  -> KHONG gui file zip nay cho nguoi khac.
-  -> Neu may moi la may dung chung, nen doi PIN trong .env.
+  -> KHONG gui file nay cho nguoi khac. Doi tai khoan: sua .env roi chay lai.
 
-* Zip nay KHONG kem thu muc data\ (anh chup + lich su job cua benh nhan).
-  Do la co y: tranh mang du lieu benh nhan sang may khac.
-  May moi se tu tao data\ rong khi chay lan dau.
+* Thu muc data\ (anh chup + lich su ca lam) KHONG duoc dua len GitHub.
+  May moi tu tao data\ rong khi chay lan dau.
 
-* Neu doi mat khau HIS: sua lai HIS_PASS trong file .env roi khoi dong lai bot.
-
-* Cap nhat code moi nhat (neu may co Internet):
-    git pull        (neu co git)
-  hoac tai lai zip moi tu may goc.
+* Doi mat khau HIS: sua HIS_PASS trong .env roi khoi dong lai bot.
 
 
 GAP LOI THI XEM O DAU
 ------------------------------------------------------------------------
 - Cua so den bao loi gi thi doc dong do.
 - Anh chup tung buoc + log nam trong:  data\screenshots\
-- Vao giao dien web -> bam vao tung Job de xem no chay den buoc nao,
+- Vao giao dien web -> bam vao tung ca de xem chay den buoc nao,
   co anh chup minh hoa tung buoc.
 ========================================================================
