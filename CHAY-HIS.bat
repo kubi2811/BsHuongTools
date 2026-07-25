@@ -96,7 +96,7 @@ echo.
 echo [4/5] Chua co cau hinh - nhap thong tin dang nhap HIS:
 echo.
 set "U="
-set /p U=      Tai khoan HIS (vd HUL28):
+set /p U=      Tai khoan HIS        :
 if "%U%"=="" (
   echo.
   echo     [X] Chua nhap tai khoan. Bam dup lai file nay.
